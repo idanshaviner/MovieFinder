@@ -38,6 +38,7 @@ The detailed sub-specs live in [`docs/`](docs/):
 - [`docs/07-qa-test-plan.md`](docs/07-qa-test-plan.md) — test strategy & acceptance criteria
 - [`docs/08-work-breakdown.md`](docs/08-work-breakdown.md) — epics, tickets, DoD
 - [`docs/09-conventions.md`](docs/09-conventions.md) — coding standards, errors, logging
+- [`docs/10-history-import.md`](docs/10-history-import.md) — cold-start: Netflix CSV import (FR-7)
 
 ---
 
@@ -191,7 +192,8 @@ the workspace. One source, two resolution mechanisms — both compile-checked in
 - `catalog_titles` — one row per TMDB movie/show; canonical metadata.
 - `catalog_embeddings` — `vector(1536)` per title, `ivfflat` index, cosine distance.
 - `profiles` — one per auth user (FK `auth.users`).
-- `watches` — finished watches synced from clients (TMDB id, type, episode, pct, ts).
+- `watches` — finished watches synced from clients (TMDB id, type, episode, pct, ts,
+  `source: 'live' | 'netflix_csv' | 'manual'`). See [`docs/10`](docs/10-history-import.md#4-data-model-additions).
 - `taste_signals` — explicit likes/dislikes + reason text from chat.
 - `excluded_titles` — user "don't recommend this" set.
 - `chat_threads` — server-side bounded multi-turn history per `threadId` (RLS, retention).
@@ -335,7 +337,7 @@ touches, dependencies, a Definition of Done, and a difficulty tag (🟢 junior-f
 | E2   | Netflix capture (scrobbler + resolve)   | Phase 1   | Finishing a title creates a `watch` locally|
 | E3   | Local store, taste profile & sync       | Phase 1   | Data survives SW restart and round-trips   |
 | E4   | In-page chat UI + `/recommend` wired     | Phase 1   | End-to-end: chat → explained recs          |
-| E5   | Settings, onboarding, export/delete     | Phase 1   | Privacy ACs pass; ready for beta           |
+| E5   | Settings, onboarding, export/delete, **CSV import (FR-7)** | Phase 1 | Privacy ACs pass; CSV import ACs pass; ready for beta |
 | E6   | "Watch next" nudge & cost tuning        | Phase 2   | Post-MVP                                    |
 
 **Critical path (corrected):** `E0 → E1 → (E3-1 auth + E5-2 consent guard) → E4`. The
@@ -384,7 +386,13 @@ The full release checklist (store listing, privacy policy, key rotation, smoke t
 
 ## 13. Out of scope for v1 (do not build)
 
-Firefox, bring-your-own-key, non-Netflix adapters, multi-device real-time sync,
+Firefox, bring-your-own-key, non-Netflix **live** adapters, multi-device real-time sync,
 social/sharing, and "whole-show finished" detection beyond per-episode aggregation. These
 are tracked in PRD §10 and will be re-specced when prioritized.
+
+**Cold-start import (FR-7):** the one-time **Netflix CSV import IS in v1** — see
+[`docs/10-history-import.md`](docs/10-history-import.md). The *other* import lanes
+(Letterboxd/IMDb tracker CSV, browser-history `chrome.history` scan) are **deferred** but
+reuse the same parse → resolve → `watchId()` → outbox pipeline. Google/YouTube Takeout is
+**ruled out** (wrong data — YouTube + search, not streaming watches).
 ```

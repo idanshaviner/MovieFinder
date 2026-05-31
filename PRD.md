@@ -60,8 +60,10 @@ These do not block the project but must shape expectations:
    Netflix shut down its public API in 2014. Capture is therefore via **in-browser
    scrobbling only**.
 2. **Partial history.** The extension only sees viewing that happens in a desktop
-   browser — TV apps, mobile apps, and consoles are invisible. Chat input both
-   mitigates this and solves cold-start.
+   browser — TV apps, mobile apps, and consoles are invisible. Two things mitigate this
+   and solve cold-start: **chat input** ("name a few films you loved") and a **one-time
+   import of the Netflix privacy-export CSV** (see FR-7), whose `Bookmark` column lets us
+   retroactively apply the ≥90% "finished" rule to past viewing on *any* device.
 3. **"90% finished" is best-effort**, inferred from the web player's progress, not
    official platform data.
 4. **No API keys in the bundle.** Shipping secrets in an extension is insecure, so the
@@ -114,6 +116,17 @@ These do not block the project but must shape expectations:
 - Select enabled sites; set completion threshold (default 90%).
 - Data management: view / export / delete history and profile.
 - Privacy-first first-run onboarding explaining what is captured.
+
+### FR-7 Prior-history import (cold-start backfill)
+- Optional onboarding step (and re-runnable from settings) to import the user's past
+  viewing so the first recommendation isn't blind.
+- **v1 source: Netflix privacy-export `ViewingActivity.csv`** (`netflix.com/account/getmyinfo`).
+- Parse **entirely client-side** (raw CSV never uploaded; PII dropped); compute completion
+  from `Bookmark` ÷ TMDB runtime; titles ≥90% become finished `watches` (`source='netflix_csv'`).
+- Idempotent and convergent with live capture (shared deterministic watch id); low-confidence
+  title matches go to a user review list, never recorded silently.
+- Future lanes (same pipeline, deferred): Letterboxd/IMDb ratings CSV, browser-history scan.
+- Full spec: [`docs/10-history-import.md`](docs/10-history-import.md).
 
 ---
 
@@ -214,6 +227,7 @@ recommendations are always computed server-side so grounding and keys stay serve
   + auth, TMDB catalog ingested into pgvector, MV3 extension skeleton.
 - **Phase 1 — MVP:** Netflix capture (90% rule, movies + TV episodes) → local taste
   profile → in-page chat returning explained recommendations with where-to-watch.
+  Includes the **Netflix CSV cold-start import** (FR-7) in onboarding.
 - **Phase 2:** "Watch next" nudge, taste-profile editing, data export/delete polish,
   prompt-cache cost tuning.
 - **Phase 3:** Second platform adapter (e.g., Max or Prime), then scale out.
@@ -229,7 +243,11 @@ recommendations are always computed server-side so grounding and keys stay serve
 **Explicitly out of scope for v1** (tracked here, re-specced when prioritized — see [`SPEC.md`](SPEC.md) §13):
 - Firefox support.
 - Bring-your-own-key option for privacy-maximalist users.
-- Non-Netflix site adapters.
+- Non-Netflix **live** site adapters (one-time Netflix CSV import *is* in v1 — see FR-7).
+- Additional cold-start import lanes: Letterboxd/IMDb tracker CSV, browser-history scan
+  (`history` permission). Deferred; reuse the FR-7 pipeline.
+- Google / YouTube Takeout as a source — **ruled out** (exports YouTube + search, not
+  streaming watches; too noisy for film taste).
 - Real-time multi-device sync.
 - Social / sharing features.
 - "Finished the whole show" detection beyond per-episode aggregation.
