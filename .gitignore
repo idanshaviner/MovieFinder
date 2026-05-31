@@ -1,0 +1,22 @@
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# env / secrets — NEVER commit
+.env
+.env.*
+!.env.example
+
+# supabase local
+.branches/
+.temp/
+supabase/.temp/
+
+# os / editor
+.DS_Store
+*.log
+.idea/
+.vscode/*
+!.vscode/extensions.json
