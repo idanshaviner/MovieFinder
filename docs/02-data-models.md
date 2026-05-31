@@ -26,8 +26,15 @@ create table catalog_titles (
   genres        text[]  not null default '{}',
   poster_path   text,
   popularity    real    not null default 0,
+  adult         boolean not null default false,  -- TMDB adult flag → ALWAYS excluded from recs
+  maturity_rank smallint,                     -- coarse 0(all-ages)..5(mature), best-effort from TMDB
+                                              -- certifications; family mode filters above a threshold
+  released_episode_count integer,             -- TV only: # released episodes (TV de-dupe & tiers, 05 §2.4/§3.7)
   -- denormalised watch-provider availability per region, refreshed by ingest
   providers     jsonb   not null default '{}',  -- { "US": ["Netflix","Prime"], ... }
+  -- per-platform native id for building EXACT title links; learned organically from capture
+  -- (POST /catalog/platform-link) and used by /recommend to build currentPlatformUrl. (FR-3)
+  platform_ids  jsonb   not null default '{}',  -- { "netflix": "70131314", ... }
   updated_at    timestamptz not null default now()
 );
 create index on catalog_titles using gin (genres);
@@ -61,8 +68,16 @@ create table profiles (
   -- v1 onboarding seeds this from enabled_sites but it is independently editable. (review M7)
   subscriptions text[] not null default '{"Netflix"}',
   completion_threshold real not null default 0.90 check (completion_threshold between 0.5 and 1.0),
+  -- region drives availability/where-to-watch. AUTO-DETECTED on first run (client locale, server
+  -- IP as fallback) and stored here; user-overridable in settings. 'US' is only a last resort.
   region     text not null default 'US',
+  region_source text not null default 'detected' check (region_source in ('detected','user')),
+  content_filter text not null default 'standard' check (content_filter in ('standard','family')),
+  -- standard: exclude `adult` titles. family: also exclude maturity_rank above the family threshold.
+  session_import_enabled boolean not null default false,  -- FR-9 'Connect your Netflix' opt-in
   consented_at timestamptz,               -- null until first-run consent
+  -- profiles IS the server copy of client Settings; synced via POST /sync (LWW by settings_updated_at).
+  settings_updated_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
 
@@ -76,9 +91,12 @@ create table watches (
   media_type  text not null check (media_type in ('movie','tv')),
   season      integer,                     -- null for movies
   episode     integer,                     -- null for movies
-  progress_pct real not null check (progress_pct >= 0 and progress_pct <= 1),  -- (review m12)
-  finished_at timestamptz not null,
-  source      text not null default 'scrobble' check (source in ('scrobble','manual')),
+  -- progress_pct is NULL when completion is unknown (FR-9 session items that lack it, doc 12)
+  progress_pct real check (progress_pct is null or (progress_pct >= 0 and progress_pct <= 1)),
+  completion_known boolean not null default true,  -- false = "watched, completion unknown" (FR-9)
+  finished_at timestamptz not null,           -- watch/seen timestamp
+  source      text not null default 'scrobble'
+              check (source in ('scrobble','netflix_session','netflix_csv','manual')),  -- FR-1/FR-9/FR-7
   updated_at  timestamptz not null default now(),
   deleted     boolean not null default false  -- soft delete for sync
 );
@@ -117,15 +135,30 @@ create table chat_threads (
 create index on chat_threads (user_id, updated_at desc);
 -- Retention: a nightly job deletes chat_threads with updated_at < now() - interval '30 days'.
 
+-- NOTE: rate_limits + cost_ledger are OPERATIONAL tables created in an EARLY migration (E0-10),
+-- because the function harness's rate-limiter and budget guard need them before any user-feature
+-- table exists. They're shown here next to user data only for readability.
+
 -- Per-user rate-limit counters (resolves review m7). Could also be Supabase KV; table chosen
 -- so it is RLS-scoped, backed up, and visible. Keyed by (user_id, route, window_start).
 create table rate_limits (
   user_id      uuid not null references auth.users(id) on delete cascade,
-  route        text not null,              -- 'recommend' | 'sync' | 'catalog_resolve'
+  route        text not null,              -- 'recommend'|'sync'|'catalog_resolve'|'catalog_resolve_batch'|'catalog_platform_link'|'account_delete'|'profile'
   window_start timestamptz not null,       -- truncated to the limiter's window (minute/day)
   count        integer not null default 0,
   primary key (user_id, route, window_start)
 );
+
+-- GLOBAL spend ledger for the monthly budget kill-switch (open sign-up; cost defense).
+-- NOT user-scoped → no RLS, service-role only, never readable by clients. One row per month.
+create table cost_ledger (
+  month        date primary key,           -- first of month (UTC)
+  llm_usd      numeric not null default 0, -- estimated Anthropic spend this month
+  embed_usd    numeric not null default 0, -- estimated OpenAI embedding spend
+  updated_at   timestamptz not null default now()
+);
+-- The recommend/embed paths increment estimated cost (from token counts) atomically; a shared
+-- budget guard reads month-to-date vs MONTHLY_BUDGET_USD and degrades gracefully when ≥ ceiling.
 ```
 
 ### 1.3 Row-Level Security (🔒 non-optional)
@@ -156,7 +189,7 @@ Functions. This keeps the contract small and auditable.
 
 ---
 
-## 2. IndexedDB (client)
+## 2. IndexedDB (client) {#indexeddb}
 
 Wrapped with [`idb`](https://github.com/jakearchibald/idb). DB name `moviefinder`, version
 bumped on any store change with a migration in `openDB`'s `upgrade`.
@@ -164,7 +197,7 @@ bumped on any store change with a migration in `openDB`'s `upgrade`.
 ```ts
 // packages/extension/src/store/schema.ts
 import type { DBSchema } from 'idb';
-import type { Watch, TasteSignal, Settings, ChatThread, OutboxItem } from '@moviefinder/shared';
+import type { Watch, TasteSignal, ExcludedTitle, Settings, ChatThread, OutboxItem } from '@moviefinder/shared';
 
 export interface MovieFinderDB extends DBSchema {
   watches:       { key: string; value: Watch;       indexes: { 'by-finishedAt': number } };
@@ -203,9 +236,10 @@ export interface Watch {
   mediaType: MediaType;
   season?: number;
   episode?: number;
-  progressPct: number;        // 0..1
-  finishedAt: number;         // epoch ms
-  source: 'scrobble' | 'netflix_csv' | 'manual';  // netflix_csv = FR-7 cold-start import (docs/10)
+  progressPct?: number;       // 0..1; undefined when completionKnown=false (FR-9, docs/12)
+  completionKnown: boolean;   // false = "watched, completion unknown" (weaker taste signal)
+  finishedAt: number;         // epoch ms (watch/seen time)
+  source: 'scrobble' | 'netflix_session' | 'netflix_csv' | 'manual';  // FR-1 / FR-9 / FR-7
   updatedAt: number;
   deleted?: boolean;
 }
@@ -247,8 +281,12 @@ export interface Settings {
   enabledSites: string[];       // sites the extension is active on (capture/inject)
   subscriptions: string[];      // services the user pays for → where-to-watch boost (review M7)
   completionThreshold: number;  // 0.5..1.0, default 0.90
-  region: string;               // ISO country, default 'US'
+  region: string;               // ISO country; auto-detected, user-overridable
+  regionSource: 'detected' | 'user';
+  contentFilter: 'standard' | 'family';  // 'family' = stricter maturity filter (FR-6)
+  sessionImportEnabled: boolean;         // FR-9 'Connect your Netflix' opt-in (default false)
   consentedAt?: number;         // first-run consent ts
+  updatedAt: number;            // epoch ms — LWW key when syncing settings → profiles row
 }
 
 // One assembled taste item per title (TV episodes rolled up to the show — see 05 §3.7).
@@ -287,8 +325,13 @@ export interface Recommendation {
   year?: number;
   posterUrl?: string;
   why: string;                  // grounded explanation
-  whereToWatch: string[];       // provider names available in user's region
-  playDeepLink?: string;        // CLIENT-filled, current title only (never set by server)
+  // ── availability (server-authoritative; never trust the model for these) ──
+  onCurrentPlatform: boolean;   // is this title on the request's currentSite (e.g. Netflix)?
+  whereToWatch: string[];       // provider names in the user's region (off-platform display text)
+  currentPlatformUrl?: string;  // present iff onCurrentPlatform: exact title-page link when the
+                                // platform id is known (catalog_titles.platform_ids), else a
+                                // platform SEARCH link. Server-built. (supersedes review B1)
+  playDeepLink?: string;        // CLIENT-upgraded exact PLAY link, current open title only
 }
 
 // ── API DTOs ──
@@ -306,6 +349,7 @@ export interface RecommendResponse {
 
 export interface SyncRequest {
   outbox: OutboxItem[];
+  settings?: Settings;          // push the single settings row → upsert profiles (LWW by updatedAt)
   since?: number;               // pull cursor (epoch ms)
 }
 export interface SyncResponse {
@@ -315,7 +359,38 @@ export interface SyncResponse {
     tasteSignals: TasteSignal[];
     excludedTitles: ExcludedTitle[];
   };
+  settings?: Settings;          // returned iff the server's settings row is newer than the client's
   cursor: number;               // new pull cursor
+}
+
+// Bulk title resolution for FR-7 import (review R4). ≤100 items/request.
+export interface ResolveBatchItem {
+  ref: string;                  // client correlation key (row index or local watchId)
+  title: string;
+  year?: number;
+  type?: MediaType;
+  season?: number;
+  episode?: number;
+}
+export interface ResolveBatchRequest { items: ResolveBatchItem[]; }   // max 100
+
+// Organic exact-link learning (FR-3): adapter reports a TMDB↔native-platform id pair.
+export interface PlatformLinkRequest { tmdbId: number; siteId: string; siteVideoId: string; }
+export interface ResolveResult {
+  ref: string;
+  tmdbId: number | null;        // null = no/low-confidence match → client review list
+  mediaType?: MediaType;
+  title?: string;
+  year?: number;
+  confidence: number;           // 0..1
+}
+export interface ResolveBatchResponse { results: ResolveResult[]; }
+
+// GET /profile (FR-8) response — see TasteProfile / TasteProfileItem above.
+export interface ProfileResponse {
+  profile: TasteProfile;
+  history: (Pick<Watch, 'tmdbId' | 'mediaType' | 'season' | 'episode' | 'progressPct'
+    | 'completionKnown' | 'finishedAt' | 'source'> & { title: string | null; year?: number })[];
 }
 ```
 

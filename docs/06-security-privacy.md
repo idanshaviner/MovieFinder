@@ -89,12 +89,24 @@ evasion. We are a friends/beta product.
 
 ## 6. Logging & telemetry rules {#no-pii}
 
+🔒 The PII bar is the same for logs **and** telemetry: **no content, no identity, ever.**
+
 - **No PII, no content, no ids** in server logs. Allowed: `error.code`, latency, token
   counts, a random `traceId`, the function name. Forbidden: query text, titles, email,
   `user_id`, JWT, IP-derived identity.
+- **Allowed telemetry (v1 — refines the earlier "no telemetry" stance):**
+  - **Anonymous aggregate metrics** — counters/histograms only: recommendations served, p50/p95
+    latency, error-rate by `error.code`, cache-hit ratio, daily-active count. **No per-user
+    dimension, no titles, no queries.** Emitted from the Edge Functions; stored as aggregates.
+  - **Error monitoring** (e.g. **Sentry**) on the Edge Functions for stack traces + error rates.
+    🔒 Scrub before send: **no** request bodies, query text, titles, email, `user_id`, JWT, or
+    IP. Sentry configured with `sendDefaultPii: false` and a `beforeSend` redactor; the DSN is a
+    backend secret. A client-side error reporter is **opt-in only** (off by default).
+  - This is disclosed in the privacy policy.
 - The client log ring buffer (for bug reports) stays **on the device**; it is shown to the
   user and only leaves the machine if the user manually copies it into a report.
-- No third-party analytics SDKs in v1.
+- **Forbidden:** any analytics that carries titles, queries, watch history, email, or a stable
+  per-user/device id; session-replay; ad/marketing SDKs.
 
 ---
 

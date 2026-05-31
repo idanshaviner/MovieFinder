@@ -26,6 +26,7 @@
 | `UNAUTHENTICATED`  | 401  | false       | No/invalid JWT                           |
 | `INVALID_INPUT`    | 400  | false       | Body failed schema validation            |
 | `RATE_LIMITED`     | 429  | true        | Per-user budget exceeded                 |
+| `AT_CAPACITY`      | 429  | true        | Global monthly budget reached → degrade gracefully ([`09 §13`](09-conventions.md#13-cost--budget-guard)) |
 | `UPSTREAM_TIMEOUT` | 504  | true        | Anthropic/OpenAI/TMDB timed out          |
 | `UPSTREAM_ERROR`   | 502  | true        | Upstream returned an error               |
 | `NOT_FOUND`        | 404  | false       | e.g. resolve found nothing               |
@@ -35,7 +36,7 @@ The client maps `retryable` to whether it shows a "Try again" affordance.
 
 ---
 
-## 1. `POST /recommend`  (core)
+## 1. `POST /recommend` (core) {#1-post-recommend-core}
 
 The full RAG behaviour is in [`05-recommendation-engine.md`](05-recommendation-engine.md);
 this is the wire contract.
@@ -50,25 +51,31 @@ this is the wire contract.
 }
 ```
 
-**Response** (`RecommendResponse`) — ⚠️ the server **never** sets `playDeepLink`; the client
-adapter fills it post-response for the title currently open (resolves review B1):
+**Response** (`RecommendResponse`) — availability fields are **server-authoritative**; the
+client only *upgrades* `playDeepLink` for the title currently open (supersedes review B1):
 ```jsonc
 {
   "ok": true,
   "data": {
     "threadId": "…uuid…",
-    "assistantMessage": "Since you loved Inception's layered reality, try these:",
+    "assistantMessage": "Since you loved Inception's layered reality — note Sicario isn't on Netflix, but you can still watch these here:",
     "recommendations": [
       {
-        "tmdbId": 1124,
-        "mediaType": "movie",
-        "title": "The Prestige",
-        "year": 2006,
+        "tmdbId": 1124, "mediaType": "movie", "title": "The Prestige", "year": 2006,
         "posterUrl": "https://image.tmdb.org/t/p/w342/…",
-        "why": "Twisty, layered structure and obsessive rivalry — the kind of reality-bending you liked in Inception.",
-        "whereToWatch": ["Netflix"]
-        // no playDeepLink here: the server cannot map TMDB → a Netflix watch URL.
-        // The client adds one ONLY if this title is the one currently open on the page.
+        "why": "Twisty, layered structure and obsessive rivalry — the reality-bending you liked in Inception.",
+        "onCurrentPlatform": true,
+        "whereToWatch": ["Netflix"],
+        "currentPlatformUrl": "https://www.netflix.com/title/70131314"  // exact id known → title page
+        // (if the Netflix id were unknown, this would be https://www.netflix.com/search?q=The%20Prestige)
+        // playDeepLink omitted: added by the client only if this is the title currently open.
+      },
+      {
+        "tmdbId": 273481, "mediaType": "movie", "title": "Sicario", "year": 2015,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/…",
+        "why": "Exactly the tense, morally-gray thriller you said you loved — the closest match overall.",
+        "onCurrentPlatform": false,
+        "whereToWatch": ["Prime Video", "Max"]   // off-platform → names as TEXT, no link/no play
       }
     ]
   }
@@ -78,10 +85,15 @@ adapter fills it post-response for the title currently open (resolves review B1)
 **Server-side steps (must, in order):** auth → validate → rate-limit → load + assemble
 profile from DB (empty profile is valid — cold-start) → embed query (OpenAI) → pgvector
 top-K → de-dupe vs `watches`+`excluded_titles` (TV rule in [`05 §2.4`](05-recommendation-engine.md#2-retrieval))
-→ build cached prompt → call Claude → **grounding gate** (drop any `tmdbId` not in the
-candidate set) → enrich (poster; `whereToWatch` from `catalog_titles.providers[profile.region]`
-filtered/boosted by `profile.subscriptions`) → upsert the turn into the `chat_threads` row
-keyed by `threadId` → respond. **No deep link is produced server-side.**
+→ compute per-candidate **availability** (`onCurrentPlatform` = does
+`catalog_titles.providers[region]` include a provider mapped to `currentSite`) → build cached
+prompt **including each candidate's on/off-platform flag** → call Claude → **grounding gate**
+(drop any `tmdbId` not in the candidate set) → **availability-aware two-tier ordering / caps**
+([`05 §2.5`](05-recommendation-engine.md#25-availability-aware-two-tier-ranking-fr-4)) → enrich
+(poster; `whereToWatch` from providers; for on-platform titles build `currentPlatformUrl` =
+exact title-page from `platform_ids[currentSite]` if known, else a `currentSite` search link) →
+upsert the turn into the `chat_threads` row keyed by `threadId` → respond. **Availability and
+links are set server-side; `playDeepLink` is left for the client.**
 
 **Rate limit (default):** 60 calls / user / day, burst 10 / minute.
 
@@ -109,6 +121,7 @@ Push the client outbox, pull the server delta. Idempotent.
     { "id": "exclude:603", "entity": "exclude", "op": "delete",
       "payload": { "tmdbId": 603 }, "updatedAt": 1717000001000 }
   ],
+  "settings": { /* Settings (region, subscriptions, contentFilter, threshold, …, updatedAt) */ },
   "since": 1716990000000       // pull everything updated_at > since
 }
 ```
@@ -135,11 +148,23 @@ Push the client outbox, pull the server delta. Idempotent.
   upserting the same episode updates the one row instead of violating the natural-key index.
 - Apply only if the item's `updatedAt` ≥ the stored row's `updatedAt` (last-write-wins).
   Older items are acknowledged in `applied` but ignored (client can drop them).
+- 🔒 **Completion is sticky (watches).** A confirmed finish (`completion_known=true`) is
+  **never** overwritten by a `completion_known=false` row for the same `id`, regardless of
+  `updatedAt` — so a later session-import (FR-9, often completion-unknown) can't *downgrade* a
+  title you actually finished live. The reverse (unknown → known) always upgrades. Same-status
+  rows use plain LWW. The client merge applies the identical rule locally.
 - `op:"delete"` performs a hard delete (RLS-scoped).
 - `serverChanges` returns rows (incl. `excludedTitles`) with `updated_at > since`
   **excluding** ones the client just pushed in this call (avoid echo). Client applies them to
   IndexedDB then advances its cursor.
 - Cap `outbox` at 500 items/request; client batches beyond that.
+- **Settings sync (🔒 — the path that gets `region`/`subscriptions`/`contentFilter`/`threshold`/
+  `consentedAt` to the server, where `/recommend` reads them).** If `settings` is present in the
+  request, **upsert the `profiles` row** (LWW by `settings.updatedAt` vs `profiles.settings_updated_at`).
+  If the server's `profiles` row is newer than `since`, return it as `settings` in the response.
+  The server **creates a default `profiles` row on first authenticated call** if none exists, so
+  `/recommend` always has a profile (defaults until the client's first settings push). The client
+  pushes settings on onboarding completion and on every settings change.
 
 **Rate limit:** 120 calls / user / day (sync is frequent but cheap).
 
@@ -181,6 +206,70 @@ GET /catalog/resolve?title=Severance&type=tv&season=1&episode=3
 - No match → `404 NOT_FOUND` (client then asks the user to confirm/skip).
 
 **Rate limit:** 300 / user / day (capture can be bursty during a binge).
+
+### 3a. `POST /catalog/resolve-batch` (bulk import — resolves review R4)
+
+The single-title `GET /catalog/resolve` is for the **live capture** path (one finish at a
+time). **Bulk history import (FR-7, [`10`](10-history-import.md))** can need to resolve
+hundreds–thousands of titles, which would blow the 300/day single-title limit. This batch
+variant resolves many in one request with its own budget.
+
+**Request** (`ResolveBatchRequest`) — up to **100 items**:
+```jsonc
+{
+  "items": [
+    { "ref": "0", "title": "Inception", "year": 2010, "type": "movie" },
+    { "ref": "1", "title": "Severance", "type": "tv", "season": 1, "episode": 3 }
+  ]
+}
+```
+- `ref` is a client-supplied correlation key (e.g. the row index or the local `watchId`) echoed
+  back in each result, so the client maps results to its rows without relying on array order.
+
+**Response** (`ResolveBatchResponse`):
+```jsonc
+{
+  "ok": true,
+  "data": {
+    "results": [
+      { "ref": "0", "tmdbId": 27205, "mediaType": "movie", "title": "Inception",
+        "year": 2010, "confidence": 0.94 },
+      { "ref": "1", "tmdbId": null, "confidence": 0.0 }   // no/low match → client review list
+    ]
+  }
+}
+```
+- Each item uses the **same scoring + lazy-insert logic** as `GET /catalog/resolve`
+  ([`05 §5`](05-recommendation-engine.md#title-resolution)); a miss returns `tmdbId: null`
+  (not a 404 — partial success is normal for a batch).
+- The function processes items concurrently with a bounded pool and is **idempotent**
+  (re-resolving the same title is safe; lazy inserts upsert).
+- `confidence < 0.6` items are the client's "review these" list, exactly as for single resolve.
+
+**Rate limit:** 50 batch calls / user / day (= up to 5,000 titles/day). The client paginates
+a large import into ≤100-item requests and shows progress; a very large history may still span
+sessions but never silently stalls mid-import.
+
+### 3b. `POST /catalog/platform-link` (organic exact-link learning — FR-3)
+
+Best-effort, fire-and-forget. When the page adapter knows both a title's **TMDB id** and its
+**native platform id** (e.g. the Netflix `siteVideoId` from the currently-open `/watch/<id>`
+page, after resolution), the SW reports the pair so the catalog can build **exact** title-page
+links for everyone later. This is the only source of `catalog_titles.platform_ids`; without it,
+on-platform links gracefully fall back to a search link, so this endpoint is **non-blocking**.
+
+**Request** (`PlatformLinkRequest`)
+```jsonc
+{ "tmdbId": 1124, "siteId": "netflix", "siteVideoId": "70131314" }
+```
+**Response:** `{ "ok": true, "data": { "stored": true } }`
+
+- Writes `catalog_titles.platform_ids[siteId] = siteVideoId` (service-role; **catalog data, not
+  user data** → no `user_id`, no RLS table, never tied to who reported it = privacy-safe).
+- Validated + idempotent; conflicting reports keep the most-recently-seen value.
+- `siteId` ∈ the enabled-sites allowlist; `siteVideoId` shape-validated per site.
+
+**Rate limit:** 200 / user / day (cheap, opportunistic).
 
 ---
 

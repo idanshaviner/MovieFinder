@@ -122,19 +122,64 @@ Each is Given/When/Then. "Done" for the FR = all its ACs green.
 - **AC-3.4** Given `scope="movie"`, When recommending, Then only movies are returned.
 - **AC-3.5** Given a follow-up turn referencing a prior rec, When sent, Then refinement uses
   prior context (multi-turn).
-- **AC-3.6** (rewritten — resolves review B1) Given a recommended title is available on one of
-  the user's `subscriptions`, Then it is boosted and its `whereToWatch` lists that service. A
-  `playDeepLink` is present **only when the recommended title is the one currently open on the
-  page** (the only case the client adapter can build a link for); for all other recs
-  `playDeepLink` is absent and that is correct, not a bug.
+- **AC-3.6** (availability links — FR-3) Given a recommended title is on the current platform,
+  Then `onCurrentPlatform=true` and `currentPlatformUrl` is set to an **exact title-page link
+  when the platform id is known, else a platform search link** (both valid), and the UI renders
+  it as a clickable "Watch on Netflix". Given a title is **not** on the current platform, Then
+  `onCurrentPlatform=false`, `currentPlatformUrl` is absent, and the UI shows `whereToWatch`
+  provider **names as text only** (no link, no play button). `playDeepLink` is present only when
+  the rec is the title currently open on the page (client upgrade).
+- **AC-3.6b** (two-tier ranking — FR-4) Given on-platform candidates of comparable quality
+  exist, When recommending, Then on-platform titles are surfaced first and any off-platform pick
+  appears only if it beats the best on-platform candidate by the margin δ (or fills a short
+  list). When an off-platform pick is shown alongside existing on-platform options, Then
+  `assistantMessage` explicitly states on-platform alternatives exist.
+- **AC-3.6c** (off-platform seed acknowledgment — FR-3) Given the user says "I loved <Title>"
+  where <Title> is not on the platform (or not in the catalog), When recommending, Then the
+  reply acknowledges <Title> by name and uses it as a taste seed; the system never dismisses it
+  for being unavailable, and never fabricates a play link for it.
+- **AC-3.6d** (no on-platform match) Given no good on-platform candidate exists, When
+  recommending, Then off-platform titles are returned with where-to-watch text (never an empty
+  "nothing found" when good off-platform matches exist).
+- **AC-3.6e** (link learning) Given the adapter knows a `tmdbId ↔ siteVideoId` pair, When it
+  reports it via `POST /catalog/platform-link`, Then subsequent recommendations of that title
+  return an **exact** `currentPlatformUrl` instead of a search link.
 - **AC-3.7** (degradation — resolves review m3) Given the embedding service (OpenAI) or Claude
   times out/errors, When recommending, Then `/recommend` returns a retryable error envelope
   before shipping any partial result, and the UI shows a "Try again" affordance. Given pgvector
   returns 0 candidates, Then an honest no-match message is shown and Claude is not called.
 
+### FR-7 / FR-8 / FR-9 (history import, export, Connect)
+- Acceptance criteria live with their sub-specs: **FR-7** [`10 §7`](10-history-import.md#7-acceptance-criteria-selected) (AC-7.x),
+  **FR-8** [`11 §6`](11-data-export.md#6-acceptance-criteria-selected) (AC-8.x), **FR-9**
+  [`12 §6`](12-netflix-session-import.md#6-acceptance-criteria-selected) (AC-9.x). All are part
+  of the release gate. Cross-lane convergence (scrobble/session/CSV → one `watch`) is tested in
+  the sync-identity integration test (§3).
+
+### Cross-cutting (cost, region, telemetry, theme)
+- **AC-X.1** (budget kill-switch) Given month-to-date spend ≥ `MONTHLY_BUDGET_USD`, When a user
+  asks for a recommendation, Then `/recommend` returns retryable `AT_CAPACITY` (not 500) and the
+  UI shows a calm "at capacity" message; free paths (sync/profile) still work. Given metering is
+  unreadable, Then the guard fails **open** (allow) and alerts.
+- **AC-X.2** (region) Given a non-US user, When recommending, Then availability/where-to-watch
+  use their detected region; changing region in settings updates results.
+- **AC-X.3** (no-PII telemetry) Given metrics/Sentry are enabled, Then no payload contains a
+  title, query, email, `user_id`, JWT, or IP (verified by inspecting emitted events).
+- **AC-X.4** (theme) Given OS dark mode, Then the dock renders dark and is legible over Netflix;
+  light mode renders light; the settings override wins.
+- **AC-X.5** (content filter) Given any user, Then adult titles never appear in recommendations.
+  Given **family mode** on, Then titles above the family maturity threshold are also excluded;
+  toggling it off restores them.
+- **AC-X.6** (session opt-in) Given a new user, Then "Connect your Netflix" is **off** and no
+  viewing-activity read occurs until the user accepts the one-time disclaimer; declining leaves
+  it off and everything else works.
+
 ### FR-5 In-page integration
-- **AC-5.1** Given a Netflix page, When the extension mounts, Then no layout/CSS of the page
-  changes and the player never janks (UI inside Shadow DOM, idle-mounted).
+- **AC-5.1** Given a Netflix page, When the extension mounts/opens the dock, Then the page is
+  reshaped only via our owned right margin (no Netflix DOM restructuring), the player never
+  janks, and closing/disabling fully restores the page.
+- **AC-5.1b** (fullscreen) Given the player goes fullscreen, Then the dock auto-collapses to the
+  launcher and the page margin is released; exiting fullscreen restores the prior dock state.
 - **AC-5.2** Given a site toggle off, Then no UI injects and no capture runs on that site.
 - **AC-5.3** (accessibility — resolves review m6) Given the chat panel is open, Then it is
   reachable and operable by keyboard alone (Tab order, focus trap, `Esc` closes), messages and
@@ -154,8 +199,10 @@ Each is Given/When/Then. "Done" for the FR = all its ACs green.
 ## 7. Pre-release manual smoke checklist
 - [ ] Real Netflix: finish a movie → watch recorded with correct title.
 - [ ] Real Netflix: finish 2 episodes of a show → both recorded.
-- [ ] Chat returns sensible, explained, real recs; when a rec is the currently-open title, its
-      play link opens the right title (deep links only appear for the current title — by design).
+- [ ] Chat returns sensible, explained, real recs. On-platform recs show a working "Watch on
+      Netflix" link (exact title page or search); off-platform recs show where-to-watch text only.
+- [ ] Say "I loved <a film not on Netflix>" → bot acknowledges it by name, prioritizes
+      on-platform picks, and notes on-platform alternatives if it surfaces an off-platform one.
 - [ ] Export & delete behave; after delete the account is empty.
 - [ ] No console errors leak into the Netflix page; player unaffected.
 - [ ] Golden-set rec eval passes (no hallucinated/ watched titles).

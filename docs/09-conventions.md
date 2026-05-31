@@ -51,8 +51,12 @@ Model id: `claude-haiku-4-5-20251001`. Embedding model: `text-embedding-3-small`
 ## 5. Config & env
 - No magic strings/URLs in code. Backend reads `Deno.env`; extension reads a typed `config.ts`
   populated at build time from env (`VITE_*`). Secrets are backend-only.
-- One source for shared constants (`@moviefinder/shared/constants.ts`): default threshold
-  (0.90), default region, K (40), rate limits, model ids.
+- One source for shared constants (`@moviefinder/shared/constants.ts`): `COMPLETION_THRESHOLD_DEFAULT`
+  (0.90), `K_DEFAULT` (40) / `K_CAP` (60), `OFF_PLATFORM_MARGIN` (δ=0.05), `FAMILY_MAX_MATURITY`
+  (2), rate-limit values, model ids (`claude-haiku-4-5-20251001`, `text-embedding-3-small`),
+  `APP_NAME` ("MovieFinder").
+- Backend-only env: API keys, `MONTHLY_BUDGET_USD` (default 25), `EMBED_COST_CEILING_USD` (3),
+  Sentry DSN, CORS allowlist.
 
 ## 6. Git & PR workflow
 - Branch per ticket: `e2/netflix-scrobbler`. Small PRs (< ~400 lines diff where possible).
@@ -75,6 +79,12 @@ a DoD, and its dependencies are merged. Unready tickets go back to the lead, not
 - Chat panel: focus-trapped when open, `Esc` closes, ARIA roles on messages/list, visible
   focus rings, color-contrast AA, respects `prefers-reduced-motion`.
 - Loading states are skeletons, not spinners-with-no-context; errors are actionable.
+
+## 9a. Internationalization (v1)
+- **UI chrome is English-only in v1** — no i18n framework yet. But **do not hardcode** user-
+  facing strings scattered across components: keep them in one `ui/strings.ts` module so adding
+  locales later is a drop-in. The **chatbot** is inherently multilingual (the LLM replies in the
+  user's language); never force the model to English.
 
 ## 10. Performance budgets
 - Injected bundle (content script + UI) gzipped target < 150KB; lazy-load the chat panel.
@@ -99,6 +109,28 @@ cross-user data leak (review m5):
 
 ## 12. Module-level invariants (quick reference for reviewers)
 - `watches.id` is **always** `watchId()` (deterministic uuidv5); never `crypto.randomUUID()`.
-- The server **never** sets `Recommendation.playDeepLink`; only the client adapter does.
-- Every Edge Function: validate (zod) → auth → rate-limit → work, in that order.
+- Availability is **server-authoritative**: the server sets `onCurrentPlatform`, `whereToWatch`,
+  and `currentPlatformUrl` (exact title-page when `platform_ids` known, else search link). The
+  server **never** sets `playDeepLink` (exact play URL) — only the client adapter does, and only
+  for the currently-open title. Never trust the model for availability or links.
+- Every Edge Function: **auth → validate (zod) → rate-limit → budget check → work**, in order
+  (matches [`01 §2`](01-architecture.md#2-trust-boundary) and [`03 §1`](03-api-contracts.md#1-post-recommend-core)).
 - Nothing but auth touches the network before `settings.consentedAt` is set.
+- The service-role client touches **catalog + `cost_ledger` only**, never user tables (§11).
+
+## 13. Cost & budget guard {#13-cost--budget-guard}
+Because sign-up is **open**, spend is defended in depth:
+- **Per-user caps** (the `rate_limits` table): e.g. `/recommend` 60/day, burst 10/min.
+- **Global monthly kill-switch:** a shared `_shared/budget.ts` reads month-to-date estimated
+  spend from `cost_ledger` (LLM + embeddings) and compares to `MONTHLY_BUDGET_USD` (env,
+  **default `25`**).
+  - At **≥ 80%** → log a warning + emit an alert (Sentry) for the operator.
+  - At **≥ 100%** → `/recommend` (and other paid paths) **degrade gracefully**: return a
+    friendly `error.code = "AT_CAPACITY"` (retryable later, **not** a 500) so the UI shows
+    "MovieFinder is at capacity for this month — try again soon," never an open bill.
+  - Free paths (sync, resolve from local catalog, profile) keep working.
+- **Accounting:** after each paid call, atomically add the estimated cost (from token counts ×
+  model price) to the current month's `cost_ledger` row. Estimates may lag real billing slightly;
+  the ceiling is set with headroom. The budget check is **fail-safe**: if `cost_ledger` is
+  unreadable, default to *allow* (don't take the product down over a metering glitch) but alert.
+- `AT_CAPACITY` is added to the error-code table ([`03 §0`](03-api-contracts.md#error-codes-closed-set)).
