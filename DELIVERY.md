@@ -91,7 +91,7 @@ A milestone is **Done** only when every box is checked. These are the acceptance
 | Epic | Milestone | Status | Notes |
 | ---- | --------- | ------ | ----- |
 | E0 Foundations | M0 | ✅ 95% | code complete + verified; E0-12 (accounts) + E0-11 (Sentry) outstanding |
-| E1 Catalog ingest | M1 | 🟡 | TMDB + OpenAI clients + ingest job **built & deno-checked**; `watchId` (E1-0) ✅; resolution (E1-6) + nightly (E1-5) pending; **run** blocked on keys |
+| E1 Catalog ingest | M1 | 🟡 | TMDB + OpenAI clients, ingest job, **title resolution (E1-6, 9 deno tests pass)** built & verified; `watchId` (E1-0) ✅; nightly (E1-5) pending; **run** blocked on keys |
 | E2 Netflix capture | M2 | ⬜ | adapter contract + scrobbler + session read + fixtures |
 | E3 Store/profile/sync | M2/M3 | 🟡 | IndexedDB + watchRepo ✅ (E0-5); auth/sync/profile pending |
 | E4 Chat + /recommend | M3 | 🟡 | dock UI shell ✅ (E0-3); retrieval/RAG/ranking pending |

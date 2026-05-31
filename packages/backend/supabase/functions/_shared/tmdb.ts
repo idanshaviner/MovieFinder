@@ -194,6 +194,29 @@ export async function searchTitles(
   return data.results;
 }
 
+/** A minimal, normalized candidate (id + title + type + year) for resolution scoring. */
+export interface SearchCandidate {
+  tmdbId: number;
+  title: string;
+  mediaType: MediaType;
+  year: number | null;
+}
+
+/** Search + map to candidates (keeps TMDB's raw field quirks inside this module). */
+export async function searchCandidates(
+  mediaType: MediaType,
+  query: string,
+  year?: number,
+): Promise<SearchCandidate[]> {
+  const items = await searchTitles(mediaType, query, year);
+  return items.map((it) => ({
+    tmdbId: it.id,
+    title: titleOf(it),
+    mediaType,
+    year: yearOf(it),
+  }));
+}
+
 /** Merge a list item + details + providers into the row we upsert. */
 export function toCatalogUpsert(
   mediaType: MediaType,
