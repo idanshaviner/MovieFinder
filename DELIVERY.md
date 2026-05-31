@@ -94,7 +94,7 @@ A milestone is **Done** only when every box is checked. These are the acceptance
 | E1 Catalog ingest | M1 | 🟡 | TMDB + OpenAI clients, ingest job, **title resolution (E1-6, 9 deno tests pass)** built & verified; `watchId` (E1-0) ✅; nightly (E1-5) pending; **run** blocked on keys |
 | E2 Netflix capture | M2 | ⬜ | adapter contract + scrobbler + session read + fixtures |
 | E3 Store/profile/sync | M2/M3 | 🟡 | IndexedDB + watchRepo ✅ (E0-5); auth/sync/profile pending |
-| E4 Chat + /recommend | M3 | 🟡 | dock UI shell ✅ (E0-3); retrieval/RAG/ranking pending |
+| E4 Chat + /recommend | M3 | 🟡 | dock UI shell ✅; **grounding gate + availability ranking + provider-normalization built & tested (17 deno tests)**; retrieval SQL, Anthropic client/prompt, /recommend handler pending |
 | E5 Settings/onboarding/privacy | M4 | ⬜ | — |
 | E6 Nudge + tuning | M6 | ⬜ | post-beta |
 
