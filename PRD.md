@@ -4,9 +4,13 @@
 > conversational AI which recommends movies & TV based on what you tell it and what
 > it sees you finish watching.
 
-- **Status:** Scope locked (v1)
+- **Status:** Scope locked (v1) — engineering detail in [`SPEC.md`](SPEC.md)
 - **Last updated:** 2026-05-30
 - **Owner:** idanshaviner
+
+> This PRD says **what** and **why**. The companion [`SPEC.md`](SPEC.md) (+ [`docs/`](docs/))
+> says **how**, and is the source of truth for implementation detail. Where this PRD names a
+> technology, the SPEC's §2 stack table is authoritative.
 
 ---
 
@@ -35,11 +39,14 @@ It learns from two signals:
 | **Content**        | Movies **and** TV series                                                 |
 | **MVP platform**   | Netflix only first; expand to other platforms if it succeeds             |
 | **Watch capture**  | In-browser scrobbling; "finished" = **≥90% played** (configurable)       |
-| **LLM**            | Claude Haiku 4.5 (with prompt caching)                                   |
-| **Embeddings**     | Cheap precomputed (OpenAI `text-embedding-3-small` / Google `text-embedding-005`) |
-| **Vector search**  | pgvector (Postgres)                                                      |
-| **Metadata**       | TMDB                                                                      |
-| **Secrets/backend**| Tiny serverless proxy holds API keys (chosen over bring-your-own-key)    |
+| **LLM**            | Claude Haiku 4.5 (`claude-haiku-4-5-20251001`), prompt caching on system + profile |
+| **Embeddings**     | **OpenAI `text-embedding-3-small`** (1536-dim) — single model, no mixing |
+| **Vector search**  | pgvector on Supabase Postgres (cosine, `ivfflat`)                        |
+| **Metadata**       | TMDB (catalog + posters + watch providers)                               |
+| **Backend**        | **Supabase** Edge Functions (Deno) — the only backend we run; holds all API keys (chosen over bring-your-own-key) |
+| **Auth**           | Supabase Auth, email OTP (6-digit code, entered in-extension)            |
+| **Data storage**   | Local working copy in IndexedDB; durable cross-device copy in Supabase Postgres (RLS per user); non-real-time outbox sync |
+| **Codebase**       | TypeScript (strict) pnpm monorepo; Preact + Vite + CRXJS extension       |
 | **Browser**        | Manifest V3, Chromium-first                                              |
 
 ---
@@ -57,8 +64,9 @@ These do not block the project but must shape expectations:
    mitigates this and solves cold-start.
 3. **"90% finished" is best-effort**, inferred from the web player's progress, not
    official platform data.
-4. **No API keys in the bundle.** Shipping secrets in an extension is insecure, so a
-   minimal serverless proxy is the one unavoidable backend component.
+4. **No API keys in the bundle.** Shipping secrets in an extension is insecure, so the
+   Supabase Edge Functions are the one unavoidable backend component — they hold every key
+   and are the trust boundary; the extension is a thin, untrusted client.
 5. **Per-site scrapers are fragile.** Streaming sites change their player DOM
    frequently → isolate each site behind a **versioned adapter**.
 
@@ -111,11 +119,14 @@ These do not block the project but must shape expectations:
 
 ## 5. Non-functional requirements
 
-- **Privacy & data ownership (top priority).** Default to local storage; explicit
-  consent; one-click export/delete; transparent that chat content goes to an LLM
-  provider. Publish a privacy policy.
-- **Security.** No secrets in the bundle; least-privilege host permissions; keys via
-  the serverless proxy.
+- **Privacy & data ownership (top priority).** Local-first: IndexedDB is the working copy,
+  with a durable per-user copy in Postgres protected by Row-Level Security. **Consent-gated** —
+  no capture, chat/recommend, or sync happens before the user accepts consent at first run
+  (auth is the only pre-consent backend call). Explicit consent; one-click export/delete;
+  transparent that chat content goes to an LLM provider. Publish a privacy policy.
+- **Security.** No secrets in the bundle; least-privilege host permissions (`netflix.com`
+  only in v1); CORS locked to the extension origin; per-user RLS; keys live only in the
+  Edge Functions.
 - **Resilience.** Per-site adapter pattern, versioned, with graceful failure.
 - **Performance.** In-page UI must never jank the player; async LLM calls with clear
   loading states; cache embeddings.
@@ -145,29 +156,43 @@ These do not block the project but must shape expectations:
 
 ---
 
-## 7. Recommended architecture
+## 7. Architecture (summary — full detail in [`SPEC.md`](SPEC.md) + [`docs/01-architecture.md`](docs/01-architecture.md))
 
 ```
-┌─────────────────────────── Browser Extension (MV3) ───────────────────────────┐
-│  Content scripts (per-site adapters)        Background service worker          │
-│   • Netflix adapter: capture + inject        • Orchestrates capture events     │
-│   • Injected chat UI + "watch next" nudge    • Local store (IndexedDB):        │
-│                                                history + taste profile         │
-└───────────────────────────────────────┬───────────────────────────────────────┘
-                                         │ HTTPS
+┌──────────────── Browser Extension (MV3, Preact) — UNTRUSTED ───────────────┐
+│  Content script (per-site adapter)        Background service worker         │
+│   • Netflix adapter: scrobble + inject     • Auth (email-OTP JWT)           │
+│   • Injected chat UI + "watch next" nudge  • IndexedDB (local working copy) │
+│                                            • Outbox sync engine             │
+└───────────────────────────────────────┬────────────────────────────────────┘
+                                         │ HTTPS (Bearer = Supabase JWT)
                           ┌──────────────▼───────────────┐
-                          │   Tiny serverless proxy       │
-                          │   • Holds LLM + TMDB keys      │
-                          │   • Embeds query, vector search│
-                          │   • Calls Claude (RAG)         │
-                          └──────┬─────────────┬──────────┘
-                                 │             │
-                     ┌───────────▼──┐   ┌──────▼───────────┐
-                     │  pgvector DB  │   │  Claude Haiku 4.5 │
-                     │ (TMDB catalog │   │   + prompt cache  │
-                     │  embeddings)  │   └───────────────────┘
-                     └───────────────┘
+                          │  Supabase Edge Functions      │  ← TRUST BOUNDARY
+                          │  /recommend /sync             │    (holds ANTHROPIC +
+                          │  /catalog/resolve             │     OPENAI + TMDB keys)
+                          │  /account/data (delete)       │
+                          └──────┬───────────────┬─────────┘
+                                 │               │
+                  ┌──────────────▼──┐     ┌──────▼───────────┐
+                  │ Supabase Postgres│     │ Claude Haiku 4.5  │
+                  │ • pgvector catalog│     │ (+ prompt caching)│
+                  │ • user data + RLS │     └──────────────────┘
+                  └──────────▲────────┘
+                             │ one-time + nightly
+                  ┌──────────┴───────────┐
+                  │ Catalog ingest job    │  TMDB → OpenAI embeddings → pgvector
+                  └───────────────────────┘
 ```
+
+**Two trust zones.** The extension is untrusted (it runs on a third-party page); the Edge
+Functions are the trust boundary. No API key, no other user's data, and no recommendation
+computation ever crosses into the extension.
+
+**Source of truth & sync.** IndexedDB is the local working copy of the user's *raw* data
+(finished watches, taste signals, excludes, settings); Postgres is the durable, cross-device
+copy. A **non-real-time, last-write-wins outbox sync** keeps them aligned. The assembled
+taste profile is **derived server-side at recommend time** (not stored on the client), and
+recommendations are always computed server-side so grounding and keys stay server-side.
 
 ---
 
@@ -175,16 +200,18 @@ These do not block the project but must shape expectations:
 
 - **One-time:** embed curated TMDB catalog (~50–100K titles ≈ 10–20M tokens) →
   **~$0.20–$0.40 once**.
-- **Per conversation:** ~3K input + ~600 output tokens on Haiku 4.5 ≈ **~$0.005**,
-  roughly halved with prompt caching. ~$5 ≈ a thousand recommendation conversations.
-- **Vector search:** $0 per query (self-hosted pgvector).
+- **Per conversation:** ~3K input + ~600 output tokens on Haiku 4.5 ≈ **~$0.005**.
+  ~$5 ≈ a thousand recommendation conversations. ⚠️ Budget against this **uncached** figure:
+  the prompt cache has a ~5-min TTL, and sporadic beta usage will usually miss it — treat
+  caching as upside, not a reliable halving.
+- **Vector search:** $0 per query (pgvector on Supabase Postgres).
 
 ---
 
 ## 9. Roadmap
 
-- **Phase 0 — Foundations:** serverless proxy (keys + retrieval), TMDB catalog
-  embedded into pgvector, MV3 extension skeleton.
+- **Phase 0 — Foundations:** Supabase Edge Functions (keys + retrieval) + Postgres/pgvector
+  + auth, TMDB catalog ingested into pgvector, MV3 extension skeleton.
 - **Phase 1 — MVP:** Netflix capture (90% rule, movies + TV episodes) → local taste
   profile → in-page chat returning explained recommendations with where-to-watch.
 - **Phase 2:** "Watch next" nudge, taste-profile editing, data export/delete polish,
@@ -193,9 +220,16 @@ These do not block the project but must shape expectations:
 
 ---
 
-## 10. Open questions (future)
+## 10. Open questions & out of scope for v1
 
-- Firefox support timing.
-- Whether to offer a bring-your-own-key option later for privacy-maximalist users.
-- How aggressively to detect "finished the whole show" vs. per-episode.
-- Account/sync model if users want history across multiple browsers/devices.
+**Resolved since v1 scoping:**
+- _Cross-device history_ — decided: **non-real-time outbox sync is in v1** (durable Postgres
+  copy with RLS). Real-time multi-device sync remains out of scope.
+
+**Explicitly out of scope for v1** (tracked here, re-specced when prioritized — see [`SPEC.md`](SPEC.md) §13):
+- Firefox support.
+- Bring-your-own-key option for privacy-maximalist users.
+- Non-Netflix site adapters.
+- Real-time multi-device sync.
+- Social / sharing features.
+- "Finished the whole show" detection beyond per-episode aggregation.
