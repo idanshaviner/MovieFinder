@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { watchId } from './ids.js';
+import { watchId } from './ids.ts';
 import {
   RecommendRequestSchema,
   ResolveBatchRequestSchema,
   SettingsSchema,
   SyncRequestSchema,
   WatchSchema,
-} from './schemas.js';
+} from './schemas.ts';
 
 describe('schemas accept valid and reject invalid input', () => {
   it('WatchSchema: valid finished movie + completion-unknown session item', () => {

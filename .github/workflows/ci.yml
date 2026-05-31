@@ -39,6 +39,42 @@ jobs:
       - name: Build
         run: pnpm -r build
 
+  edge-functions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Typecheck Edge Functions (resolves @moviefinder/shared from source)
+        working-directory: packages/backend/supabase/functions
+        run: deno check _shared/*.ts hello/index.ts
+
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: pw
+          POSTGRES_DB: mf
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply migrations against Postgres + pgvector
+        env:
+          PGPASSWORD: pw
+        run: |
+          psql -h localhost -U postgres -d mf -v ON_ERROR_STOP=1 -c "
+            create schema if not exists auth;
+            create table auth.users (id uuid primary key default gen_random_uuid());
+            create or replace function auth.uid() returns uuid language sql stable as \$\$ select '00000000-0000-0000-0000-000000000000'::uuid \$\$;"
+          for f in packages/backend/supabase/migrations/*.sql; do
+            echo "applying $f"; psql -h localhost -U postgres -d mf -v ON_ERROR_STOP=1 -f "$f";
+          done
+
   secret-scan:
     runs-on: ubuntu-latest
     steps:

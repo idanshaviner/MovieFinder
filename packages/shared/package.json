@@ -10,8 +10,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "build": "tsc -p tsconfig.build.json"
+    "test": "vitest run"
   },
   "dependencies": {
     "uuid": "^11.0.3",

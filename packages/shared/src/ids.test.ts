@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { excludeOutboxId, watchId, watchIdFor } from './ids.js';
+import { excludeOutboxId, watchId, watchIdFor } from './ids.ts';
 
 describe('watchId (deterministic, review B2)', () => {
   it('is stable for the same natural key', () => {

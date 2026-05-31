@@ -1,5 +1,5 @@
 import { v5 as uuidv5 } from 'uuid';
-import type { MediaType } from './types.js';
+import type { MediaType } from './types.ts';
 
 /**
  * Fixed namespace for MovieFinder deterministic ids. Do NOT change — it would re-key every

@@ -1,0 +1,26 @@
+project_id = "moviefinder"
+
+[db]
+port = 54322
+major_version = 16
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+
+[auth]
+enabled = true
+# Open sign-up (PRD locked). Email OTP (6-digit code) — no magic-link redirect.
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+enable_confirmations = false
+# OTP code (not a link): keep the template short; users paste the {{ .Token }} code.
+otp_length = 6
+otp_expiry = 600
+
+[functions.hello]
+verify_jwt = false  # we verify inside the handler so we can return the standard envelope

@@ -1,0 +1,9 @@
+{
+  "imports": {
+    "@moviefinder/shared": "../../../shared/src/index.ts",
+    "uuid": "npm:uuid@^11.0.3",
+    "zod": "npm:zod@^3.24.1",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@^2.47.10"
+  },
+  "lint": { "rules": { "tags": ["recommended"] } }
+}

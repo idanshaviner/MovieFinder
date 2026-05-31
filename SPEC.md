@@ -171,7 +171,7 @@ moviefinder/
 │     │  │  ├─ catalog-platform-link/  ← POST /catalog/platform-link (exact-link learning, FR-3)
 │     │  │  ├─ profile/                ← GET /profile (FR-8 debug/export)
 │     │  │  ├─ account-delete/         ← DELETE /account/data
-│     │  │  ├─ deno.json               ← import map: "@moviefinder/shared" → ../../shared/src
+│     │  │  ├─ deno.json               ← import map: "@moviefinder/shared" → ../../../shared/src/index.ts
 │     │  │  └─ _shared/                ← cors, auth, rateLimit, budget (kill-switch), region,
 │     │  │                                providers, anthropic, openai, tmdb, resolve, profile, metrics
 │     │  └─ seed.sql
@@ -187,8 +187,11 @@ a copy-paste bug. ⚠️ Never redefine an API type locally — import it from `
 
 **How Deno (Edge Functions) consumes `shared`:** Deno does not resolve pnpm `node_modules`.
 The functions root carries a `deno.json` whose `imports` map points `@moviefinder/shared` at
-`../../shared/src/*` (the raw `.ts`). The extension (Vite/pnpm) consumes the same package via
-the workspace. One source, two resolution mechanisms — both compile-checked in CI (E0-2/E0-7).
+`../../../shared/src/index.ts` — the **raw source**, not a build. shared's internal re-exports use
+explicit `.ts` extensions and shared is `noEmit` (no `dist`), so **both** runtimes read the same
+source: Deno natively (it requires explicit extensions), and the extension via Vite/esbuild (which
+resolves `.ts` too). npm deps (`uuid`, `zod`, `@supabase/supabase-js`) are mapped with `npm:`
+specifiers in `deno.json`. One source, two runtimes — both compile-checked in CI (`tsc` + `deno check`).
 
 ---
 

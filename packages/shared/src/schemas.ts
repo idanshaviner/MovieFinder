@@ -9,7 +9,7 @@ import {
   COMPLETION_THRESHOLD_MIN,
   OUTBOX_MAX_PER_REQUEST,
   RESOLVE_BATCH_MAX,
-} from './constants.js';
+} from './constants.ts';
 
 export const MediaTypeSchema = z.enum(['movie', 'tv']);
 export const WatchSourceSchema = z.enum(['scrobble', 'netflix_session', 'netflix_csv', 'manual']);
