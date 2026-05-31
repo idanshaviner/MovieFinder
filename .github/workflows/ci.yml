@@ -49,6 +49,9 @@ jobs:
       - name: Typecheck Edge Functions (resolves @moviefinder/shared from source)
         working-directory: packages/backend/supabase/functions
         run: deno check _shared/*.ts hello/index.ts
+      - name: Typecheck ingest job
+        working-directory: packages/backend/jobs/catalog-ingest
+        run: deno check index.ts
 
   migrations:
     runs-on: ubuntu-latest
