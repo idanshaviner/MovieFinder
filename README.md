@@ -6,6 +6,7 @@ An in-page, conversational AI movie & TV recommender that augments streaming sit
 - **Product:** [`PRD.md`](PRD.md)
 - **Engineering spec:** [`SPEC.md`](SPEC.md) → detailed sub-specs in [`docs/`](docs/)
 - **Build plan / tickets:** [`docs/08-work-breakdown.md`](docs/08-work-breakdown.md)
+- **Delivery tracker & milestones:** [`DELIVERY.md`](DELIVERY.md) ← live status + gates
 
 ## Monorepo layout
 
@@ -28,5 +29,7 @@ pnpm -r test
 
 ## Status
 
-Phase 0 (E0) in progress — `packages/shared` is implemented and tested. First release target
-is the **"Core loop" beta** (see [`SPEC.md` §10](SPEC.md)).
+Milestone **M0 (Foundations)** ~95% — full stack builds, typechecks, tests, and migrations apply
+on real Postgres+pgvector; blocked only on account provisioning (E0-12). Live status, gated
+milestones, and the critical path are tracked in [`DELIVERY.md`](DELIVERY.md). First release
+target is the **"Core loop" beta** (see [`SPEC.md` §10](SPEC.md)).

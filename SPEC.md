@@ -21,6 +21,7 @@
 | Building the backend     | §4 (data models), §5 (API contracts), §7 (rec engine)                  |
 | QA / test                | §9 (test plan & acceptance criteria)                                   |
 | A lead assigning work    | §10 (work breakdown), §11 (Definition of Done)                         |
+| Tracking delivery        | [`DELIVERY.md`](DELIVERY.md) — milestone matrix, gates, live status     |
 
 **Conventions in this doc**
 - 🔒 = a locked decision; do not change without owner sign-off.
