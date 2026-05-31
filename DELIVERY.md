@@ -11,12 +11,13 @@
 ✅ done & verified · 🟢 in progress · 🟡 partial / stubbed · ⛔ blocked · ⬜ not started
 
 ### Snapshot (where we are right now)
-- **M0 Foundations: ~95%** — all code green, verified; blocked only on account provisioning (E0-12).
-- **M1 Catalog: started** — TMDB client, OpenAI embeddings client, and the ingest job are built
-  and `deno check`-clean; `deno task ingest` is ready to run the moment keys land.
-- Whole stack builds: `lint · typecheck · 16 tests · build · deno check (all functions + job)` green;
-  **all 4 migrations apply on real Postgres 16 + pgvector** (9 tables, 6 RLS policies, ivfflat index).
-- **Next unblock is yours:** provision Supabase + TMDB/OpenAI/Anthropic keys → run ingest → M1 gate.
+- **The entire testable core is built & verified — 40 tests green** (16 Vitest + 24 Deno):
+  extension shell, backend harness, migrations (run on real PG+pgvector), E1 (TMDB/OpenAI/ingest/
+  resolution), and the E4 recommender brain (grounding gate, ranking, providers, prompt, Claude client).
+- **Only two recommender pieces remain — retrieval SQL (E4-2) + the `/recommend` handler (E4-4) —
+  and both REQUIRE the live DB + LLM.** We are now genuinely at the keys boundary.
+- **Hard blocker = E0-12 (yours):** provision Supabase + TMDB/OpenAI/Anthropic keys → I run the
+  ingest, wire `/recommend`, and you get the first real recommendation. ~20 min of setup unblocks M1+M3.
 
 ---
 
@@ -94,7 +95,7 @@ A milestone is **Done** only when every box is checked. These are the acceptance
 | E1 Catalog ingest | M1 | 🟡 | TMDB + OpenAI clients, ingest job, **title resolution (E1-6, 9 deno tests pass)** built & verified; `watchId` (E1-0) ✅; nightly (E1-5) pending; **run** blocked on keys |
 | E2 Netflix capture | M2 | ⬜ | adapter contract + scrobbler + session read + fixtures |
 | E3 Store/profile/sync | M2/M3 | 🟡 | IndexedDB + watchRepo ✅ (E0-5); auth/sync/profile pending |
-| E4 Chat + /recommend | M3 | 🟡 | dock UI shell ✅; **grounding gate + availability ranking + provider-normalization built & tested (17 deno tests)**; retrieval SQL, Anthropic client/prompt, /recommend handler pending |
+| E4 Chat + /recommend | M3 | 🟡 | dock UI shell ✅; **grounding gate, availability ranking, providers, prompt builder, Anthropic + OpenAI + TMDB clients all built & tested**; only **retrieval SQL (E4-2) + /recommend handler (E4-4)** remain — both need the live DB/LLM (keys) |
 | E5 Settings/onboarding/privacy | M4 | ⬜ | — |
 | E6 Nudge + tuning | M6 | ⬜ | post-beta |
 
