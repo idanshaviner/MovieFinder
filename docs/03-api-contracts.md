@@ -231,7 +231,43 @@ See [`06-security-privacy.md`](06-security-privacy.md#token-handling) for token 
 
 ---
 
-## 6. Versioning
+## 6. `GET /profile`  (debug & export — FR-8)
+
+Read-only. Returns the **assembled taste profile** (the same server-side aggregation
+`/recommend` builds — see [`05 §3.7`](05-recommendation-engine.md#37-tv-aggregation-episodes--one-weighted-show-item-)) plus the user's **title-enriched viewing history**. Powers the
+CSV export and is the canonical "what does the system think of me?" view. No LLM, no
+embeddings → cheap and fast.
+
+**Request:** `GET /profile` (no body).
+
+**Response**
+```jsonc
+{
+  "ok": true,
+  "data": {
+    "profile": { /* TasteProfile incl. items: TasteProfileItem[] */ },
+    "history": [
+      { "tmdbId": 27205, "title": "Inception", "year": 2010, "mediaType": "movie",
+        "season": null, "episode": null, "progressPct": 0.97,
+        "finishedAt": 1716990000000, "source": "scrobble" }
+      // one row per watch (per episode for TV), joined to catalog_titles for title/year
+    ]
+  }
+}
+```
+- RLS-scoped to `auth.uid()`; returns **only the caller's** data. Titles come from
+  `catalog_titles` (catalog data, not PII).
+- `history` is `watches` left-joined to `catalog_titles`; a watch whose title isn't yet in the
+  catalog returns `title: null` (rare; resolve backfills it).
+- The client renders two CSVs from this payload — schemas in [`11-data-export.md`](11-data-export.md).
+- Consent-gated like every data path. The response DTO + its zod schema are added together
+  per the type↔schema rule ([`02-data-models.md` §3](02-data-models.md)).
+
+**Rate limit:** 30 / user / day (a deliberate, occasional action).
+
+---
+
+## 7. Versioning
 
 - Path-version when a breaking change is unavoidable: `/v2/recommend`. v1 stays until all
   installed clients update (extensions auto-update, but allow a 2-week overlap).

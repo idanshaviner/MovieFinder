@@ -121,7 +121,7 @@ These do not block the project but must shape expectations:
 
 ### FR-6 Settings & onboarding
 - Select enabled sites; set completion threshold (default 90%).
-- Data management: view / export / delete history and profile.
+- Data management: view / **export (raw JSON, for portability)** / delete history and profile.
 - Privacy-first first-run onboarding explaining what is captured.
 
 ### FR-7 Prior-history import (cold-start backfill)
@@ -134,6 +134,17 @@ These do not block the project but must shape expectations:
   title matches go to a user review list, never recorded silently.
 - Future lanes (same pipeline, deferred): Letterboxd/IMDb ratings CSV, browser-history scan.
 - Full spec: [`docs/10-history-import.md`](docs/10-history-import.md).
+
+### FR-8 CSV export (debugging & transparency)
+- Export two human-readable CSVs from Settings: **`viewing-history.csv`** (title-enriched
+  finished watches) and **`taste-profile.csv`** (the assembled per-title taste items with
+  tier, weight, recency, and any explicit like/dislike override).
+- Lets the user — and us, when debugging — see exactly *what the recommender thinks of them*
+  and why a title does or doesn't influence recommendations.
+- Powered by a read-only `GET /profile` endpoint (the taste profile is server-derived and not
+  stored locally; local watches carry no titles). Returns only the caller's own data (RLS),
+  consent-gated. Distinct from FR-6's raw JSON portability export.
+- Full spec + column schemas: [`docs/11-data-export.md`](docs/11-data-export.md).
 
 ---
 
@@ -234,9 +245,9 @@ recommendations are always computed server-side so grounding and keys stay serve
   + auth, TMDB catalog ingested into pgvector, MV3 extension skeleton.
 - **Phase 1 — MVP:** Netflix capture (90% rule, movies + TV episodes) → local taste
   profile → in-page chat returning explained recommendations with where-to-watch.
-  Includes the **Netflix CSV cold-start import** (FR-7) in onboarding.
-- **Phase 2:** "Watch next" nudge, taste-profile editing, data export/delete polish,
-  prompt-cache cost tuning.
+  Includes the **Netflix CSV cold-start import** (FR-7) in onboarding and the **CSV debug
+  export** (FR-8) — the `GET /profile` assembly it needs is already built for recommendations.
+- **Phase 2:** "Watch next" nudge, taste-profile editing, prompt-cache cost tuning.
 - **Phase 3:** Second platform adapter (e.g., Max or Prime), then scale out.
 
 ---

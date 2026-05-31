@@ -84,7 +84,8 @@ map season+episode to a TMDB episode id, use the episode runtime. Ambiguous spli
 ## 4. Data-model additions
 
 Add to `watches` (Postgres + IndexedDB + `packages/shared`):
-- `source: 'live' | 'netflix_csv' | 'manual'` (default `'live'`). Future lanes extend the enum.
+- `source: 'scrobble' | 'netflix_csv' | 'manual'` (default `'scrobble'`; canonical enum in
+  [`02 §3`](02-data-models.md)). Future import lanes extend the enum.
 
 No new endpoints: imports write `watches` rows and flow through the existing `POST /sync`.
 `completion` maps to the existing percentage field; `finished` is derived as today.

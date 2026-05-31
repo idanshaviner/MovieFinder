@@ -195,6 +195,9 @@ calibrated against. Top-down evaluation means a 2-of-2 limited series scores `fr
 - **Query distillation (§2 step 1):** weight each seed title's contribution to the query vector
   by its item weight, so Completed/recent shows pull harder than Sampled/old ones.
 - **Rendering:** one profile line per show, e.g. `The Bear (TV, Engaged, 8 eps) — recent`.
+- **Inspectable:** these items are the `TasteProfile.items` shape returned by
+  [`GET /profile`](03-api-contracts.md#6-get-profile--debug--export--fr-8) and exported to
+  `taste-profile.csv` ([`11`](11-data-export.md)) — the debug view of what the recommender thinks.
 
 **Explicit signals win.** A `taste_signals` like/dislike on a show **overrides** the derived
 tier: a dislike makes the item **negative** regardless of episode count; an explicit like raises

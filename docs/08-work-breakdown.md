@@ -112,6 +112,9 @@ acceptance on top of that.
 | E5-6 | Privacy policy page + store listing copy | `docs/privacy-policy.md`, listing | — | 🟢 | Linked from onboarding |
 | E5-7 | Security review gate execution | checklist [`06 §9`](06-security-privacy.md#9-security-review-gate) | all | 🔴 | All boxes checked |
 | E5-8 | Golden-set rec eval + run | `backend/jobs/eval/*` | E4 | 🟡 | 0 hallucinated/watched titles |
+| E5-9 | **Netflix CSV import (FR-7)**: client-side parse → resolve → `watchId()` upsert → outbox; review list for low-confidence | `ui/Import/*`, `lib/netflixCsv.ts`, `store/*` | E2 (resolve), E3 | 🟡 | [`10`](10-history-import.md) AC-7.1–7.5; idempotent; PII dropped; raw CSV never uploaded |
+| E5-10 | **`GET /profile` fn (FR-8)** — assemble `TasteProfile.items` (tiers/weights, [`05 §3.7`](05-recommendation-engine.md#37-tv-aggregation-episodes--one-weighted-show-item-)) + title-enriched history | `functions/profile/*` | E4, E3-6 | 🟡 | Contract [`03 §6`](03-api-contracts.md#6-get-profile--debug--export--fr-8); RLS: only caller's rows; no LLM/embeddings |
+| E5-11 | **CSV debug export UI (FR-8)** — `viewing-history.csv` + `taste-profile.csv` from `/profile` | `ui/Settings`, `lib/csv.ts` | E5-10 | 🟢 | [`11`](11-data-export.md) AC-8.1–8.3; RFC-4180 quoting |
 
 ---
 

@@ -205,7 +205,7 @@ export interface Watch {
   episode?: number;
   progressPct: number;        // 0..1
   finishedAt: number;         // epoch ms
-  source: 'scrobble' | 'manual';
+  source: 'scrobble' | 'netflix_csv' | 'manual';  // netflix_csv = FR-7 cold-start import (docs/10)
   updatedAt: number;
   deleted?: boolean;
 }
@@ -251,13 +251,33 @@ export interface Settings {
   consentedAt?: number;         // first-run consent ts
 }
 
+// One assembled taste item per title (TV episodes rolled up to the show — see 05 §3.7).
+// This is the structured, inspectable view exported by GET /profile → taste-profile.csv.
+export interface TasteProfileItem {
+  tmdbId: number;
+  mediaType: MediaType;               // 'movie' | 'tv'
+  title: string;
+  tier: 'movie' | 'sampled' | 'engaged' | 'completed';  // movie = a finished film
+  baseWeight: number;                 // tier weight: movie/engaged 1.0, sampled 0.3, completed 1.5
+  episodesFinished?: number;          // TV only
+  episodesReleased?: number;          // TV only
+  fraction?: number;                  // TV only, 0..1 = episodesFinished / episodesReleased
+  lastFinishedAt: number;             // epoch ms (max across episodes for TV) → recency
+  explicitSentiment?: 'like' | 'dislike';  // from taste_signals; OVERRIDES the derived tier
+  reason?: string;                    // explicit-signal reason text
+  effectiveWeight: number;            // after explicit-signal override (dislike → negative)
+  recencyFactor: number;              // 0..1 decay on lastFinishedAt (90-day half-life)
+  rankScore: number;                  // effectiveWeight * recencyFactor — what selection ranks by
+}
+
 // Server-DERIVED, response-only. Never persisted on the client. Assembled at recommend time
 // from watches + taste_signals (TV aggregated to show level). (resolves review M2)
 export interface TasteProfile {
-  likes: { tmdbId?: number; reason?: string }[];
+  items: TasteProfileItem[];    // 🔒 authoritative structured view (05 §3.7); powers GET /profile + export
+  likes: { tmdbId?: number; reason?: string }[];      // convenience views, derived from items
   dislikes: { tmdbId?: number; reason?: string }[];
   recentFinishes: { tmdbId: number; mediaType: MediaType }[];
-  summaryText: string;          // bounded (<= ~800 tokens) rendering used in the prompt
+  summaryText: string;          // bounded (<= ~800 tokens) rendering of top items used in the prompt
 }
 
 export interface Recommendation {
@@ -327,9 +347,15 @@ runtime validation lies. CI runs a check that every exported DTO has a matching 
   `taste_signals`, `excluded_titles`, `chat_threads`, `rate_limits`, and `profiles`
   (RLS-scoped to the caller). After it returns, the account holds no viewing data.
   Soft-delete (`deleted=true`) is only an in-flight *sync* tombstone, not the delete feature.
-- **Export (FR-6)** produces a single JSON file
-  `{ watches, tasteSignals, excludedTitles, settings }` (note `excludedTitles`, review M1)
-  generated client-side from IndexedDB by iterating `dataManifest.ts` — no server round trip.
+- **Export — two kinds:**
+  - **Raw JSON (FR-6, portability):** a single file `{ watches, tasteSignals, excludedTitles,
+    settings }` (note `excludedTitles`, review M1) generated client-side from IndexedDB by
+    iterating `dataManifest.ts` — no server round trip; mirrors the delete manifest so coverage
+    can't drift. Holds raw rows only (tmdbIds, no titles).
+  - **Human/CSV (FR-8, debug & transparency):** two CSVs — `viewing-history.csv` (title-enriched
+    watches) and `taste-profile.csv` (the assembled `TasteProfileItem[]` with tier/weight/score).
+    Built from the `GET /profile` response (titles + the server-derived profile aren't in local
+    IndexedDB). Full column schemas in [`11-data-export.md`](11-data-export.md).
 - **Retention:** `chat_threads` older than 30 days are purged nightly; `rate_limits` windows
   older than a day are purged. Catalog data is not user data and is retained.
 - No analytics/telemetry that contains titles, queries, or user ids in v1. See

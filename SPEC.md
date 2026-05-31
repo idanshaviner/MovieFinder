@@ -39,6 +39,7 @@ The detailed sub-specs live in [`docs/`](docs/):
 - [`docs/08-work-breakdown.md`](docs/08-work-breakdown.md) — epics, tickets, DoD
 - [`docs/09-conventions.md`](docs/09-conventions.md) — coding standards, errors, logging
 - [`docs/10-history-import.md`](docs/10-history-import.md) — cold-start: Netflix CSV import (FR-7)
+- [`docs/11-data-export.md`](docs/11-data-export.md) — JSON + CSV export, `GET /profile` (FR-6/FR-8)
 
 ---
 
@@ -193,7 +194,7 @@ the workspace. One source, two resolution mechanisms — both compile-checked in
 - `catalog_embeddings` — `vector(1536)` per title, `ivfflat` index, cosine distance.
 - `profiles` — one per auth user (FK `auth.users`).
 - `watches` — finished watches synced from clients (TMDB id, type, episode, pct, ts,
-  `source: 'live' | 'netflix_csv' | 'manual'`). See [`docs/10`](docs/10-history-import.md#4-data-model-additions).
+  `source: 'scrobble' | 'netflix_csv' | 'manual'`). See [`docs/10`](docs/10-history-import.md#4-data-model-additions).
 - `taste_signals` — explicit likes/dislikes + reason text from chat.
 - `excluded_titles` — user "don't recommend this" set.
 - `chat_threads` — server-side bounded multi-turn history per `threadId` (RLS, retention).
@@ -236,6 +237,7 @@ extension origin. Standard error envelope:
 | `POST /recommend`        | Core. Body = query + content-type scope. Returns grounded, explained recs. |
 | `POST /sync`             | Push local outbox (watches, taste_signals, excludes); pull server delta.   |
 | `GET  /catalog/resolve`  | Resolve a scraped title string → canonical TMDB id (fuzzy match).          |
+| `GET  /profile`          | Read-only: assembled taste profile (items + tiers/weights) + title-enriched history → powers CSV export (FR-8). |
 | `DELETE /account/data`   | Hard-delete all of the user's server rows (watches, taste, excludes, threads, rate-limit, profile). |
 
 > ⚠️ There is **no** `/feedback` endpoint in v1. "I liked X because Y" is captured as a
