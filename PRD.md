@@ -74,9 +74,16 @@ These do not block the project but must shape expectations:
 
 ### "Finished" semantics
 
-- **Movie** → finished when the film reaches ≥90%.
-- **TV** → finished at the **episode** level when an episode reaches ≥90%. The taste
-  profile aggregates episodes up to the show level for recommendations.
+- **Movie** → finished when the film reaches ≥90%; counts as **one** taste item (weight 1.0).
+- **TV** → finished at the **episode** level when an episode reaches ≥90%. Episodes then
+  **roll up into a single weighted show item** so a binge can't drown out movies and one
+  sampled episode isn't mistaken for devotion:
+  - **Sampled** (1–2 episodes finished) → weight 0.3
+  - **Engaged** (≥3 episodes finished) → weight 1.0 (≈ one finished movie)
+  - **Completed** (≥80% of released episodes) → weight 1.5, and excluded from being
+    recommended back
+  - Explicit chat likes/dislikes override the derived tier. Exact formula:
+    [`docs/05-recommendation-engine.md` §3.7](docs/05-recommendation-engine.md).
 
 ---
 

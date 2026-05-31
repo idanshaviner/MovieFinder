@@ -162,6 +162,57 @@ siteId) and run all provider strings through it before comparison/boost.
   turns is dropped or summarised to keep tokens bounded. The row is purged after 30 days and
   by `DELETE /account/data`. Persisting chat at rest is disclosed in onboarding ([`06 §5`](06-security-privacy.md#5-privacy-by-design-fr-6--nfr)).
 
+### 3.7 TV aggregation: episodes → one weighted show item (🔒)
+
+Capture is per **episode** (a `watch` per episode ≥ threshold). But the **taste profile and the
+query-distillation embedding treat each show as a single weighted item**, so a 40-episode binge
+doesn't drown out movies and a one-episode sample isn't mistaken for devotion. This is the crisp
+meaning of "aggregate to show level." It is computed **server-side at recommend time** (the
+profile is server-derived per SPEC §1); nothing extra is persisted.
+
+For each show `S` with ≥ 1 finished episode:
+- `epsFinished(S)` = distinct finished `(season, episode)` count.
+- `epsReleased(S)` = `catalog_titles.released_episode_count` (nightly-refreshed; same source as §2.4).
+- `frac(S) = epsFinished / max(epsReleased, 1)`.
+- `lastFinishedAt(S)` = max finished-episode `ts` (drives recency).
+
+**Engagement tier → taste weight** (evaluate top-down; first match wins):
+
+| Tier          | Condition           | Weight | Notes                                                        |
+| ------------- | ------------------- | ------ | ------------------------------------------------------------ |
+| **Completed** | `frac ≥ 0.80`       | 1.5    | Same 80% line as the exclusion rule (§2.4) → also excluded from recs |
+| **Engaged**   | `epsFinished ≥ 3`   | 1.0    | Calibrated to equal **one finished movie**                   |
+| **Sampled**   | `epsFinished ∈ {1,2}` | 0.3  | Weak / low-confidence ("gave it a try")                      |
+
+🔒 A finished **movie** is a single item of weight **1.0** — the unit the TV weights are
+calibrated against. Top-down evaluation means a 2-of-2 limited series scores `frac=1.0` →
+**Completed**, not Sampled.
+
+**How the weight is used**
+- **Profile selection:** when capping the profile to ≤ 800 tokens / top-N items (§3.2), rank
+  items by `weight × recency`, where `recency` is a decay on `lastFinishedAt` (suggest a 90-day
+  half-life; tune later). **One line per show, never per episode.**
+- **Query distillation (§2 step 1):** weight each seed title's contribution to the query vector
+  by its item weight, so Completed/recent shows pull harder than Sampled/old ones.
+- **Rendering:** one profile line per show, e.g. `The Bear (TV, Engaged, 8 eps) — recent`.
+
+**Explicit signals win.** A `taste_signals` like/dislike on a show **overrides** the derived
+tier: a dislike makes the item **negative** regardless of episode count; an explicit like raises
+it to at least Engaged. Episodes only set the *default* weight.
+
+⚠️ Don't conflate this with **exclusion** (§2.4). Aggregation answers "*how strongly does this
+show shape taste?*"; exclusion answers "*may we recommend this show back?*". They share the 80%
+"Completed" line but are different decisions.
+
+**Worked examples**
+
+| Show                       | epsFinished | epsReleased | frac | Tier      | Weight        |
+| -------------------------- | ----------- | ----------- | ---- | --------- | ------------- |
+| Limited series, both eps   | 2           | 2           | 1.00 | Completed | 1.5 (excluded)|
+| Drama, finished season 1   | 8           | 62          | 0.13 | Engaged   | 1.0           |
+| Watched only the pilot     | 1           | 24          | 0.04 | Sampled   | 0.3           |
+| Long-runner, caught up     | 180         | 200         | 0.90 | Completed | 1.5 (excluded)|
+
 ---
 
 ## 4. Cost model in practice
@@ -193,8 +244,8 @@ confidence = score   // 0..1
   strong match, **insert it into the catalog + embed it** (lazy catalog growth) and return it.
 - Step 3: still `< 0.6` → `404`; the client asks the user to confirm/skip (never record a
   guess as a finished watch).
-- TV: resolve the **show** to its TMDB id; record `season`/`episode` from the scrape. The
-  taste profile aggregates episodes to show-level for recommendations (PRD "finished semantics").
+- TV: resolve the **show** to its TMDB id; record `season`/`episode` from the scrape. Episodes
+  roll up into one weighted show item for the taste profile — see the crisp rule in [§3.7](#37-tv-aggregation-episodes--one-weighted-show-item-).
 
 ---
 
