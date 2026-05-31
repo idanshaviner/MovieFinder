@@ -12,11 +12,7 @@ export const MF_NAMESPACE = '6f9b1f7e-1c2a-5e4d-9a3b-2c7d8e0f1a2b';
  * three capture lanes (scrobble / netflix_session / netflix_csv) and multiple devices converge
  * on one row instead of duplicating. Movies pass season/episode = undefined.
  */
-export function watchId(
-  tmdbId: number,
-  season?: number,
-  episode?: number,
-): string {
+export function watchId(tmdbId: number, season?: number, episode?: number): string {
   const key = `${tmdbId}:${season ?? ''}:${episode ?? ''}`;
   return uuidv5(key, MF_NAMESPACE);
 }

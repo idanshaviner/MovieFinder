@@ -90,9 +90,9 @@ describe('schemas accept valid and reject invalid input', () => {
   it('ResolveBatchRequestSchema: caps batch size', () => {
     const item = { ref: '0', title: 'Inception' };
     expect(ResolveBatchRequestSchema.safeParse({ items: [item] }).success).toBe(true);
-    expect(
-      ResolveBatchRequestSchema.safeParse({ items: Array(101).fill(item) }).success,
-    ).toBe(false);
+    expect(ResolveBatchRequestSchema.safeParse({ items: Array(101).fill(item) }).success).toBe(
+      false,
+    );
   });
 
   it('SyncRequestSchema: accepts empty outbox and optional settings', () => {
