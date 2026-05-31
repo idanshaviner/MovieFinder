@@ -11,10 +11,12 @@
 ✅ done & verified · 🟢 in progress · 🟡 partial / stubbed · ⛔ blocked · ⬜ not started
 
 ### Snapshot (where we are right now)
-- **M0 Foundations: ~95% — all code green, verified; blocked only on account provisioning (E0-12).**
-- 5 commits; whole stack builds: `lint · typecheck · 16 tests · build · deno check` green; **all
-  4 migrations apply on real Postgres 16 + pgvector** (9 tables, 6 RLS policies, ivfflat index).
-- **Next unblock is yours:** provision Supabase + TMDB/OpenAI/Anthropic keys → unblocks M1.
+- **M0 Foundations: ~95%** — all code green, verified; blocked only on account provisioning (E0-12).
+- **M1 Catalog: started** — TMDB client, OpenAI embeddings client, and the ingest job are built
+  and `deno check`-clean; `deno task ingest` is ready to run the moment keys land.
+- Whole stack builds: `lint · typecheck · 16 tests · build · deno check (all functions + job)` green;
+  **all 4 migrations apply on real Postgres 16 + pgvector** (9 tables, 6 RLS policies, ivfflat index).
+- **Next unblock is yours:** provision Supabase + TMDB/OpenAI/Anthropic keys → run ingest → M1 gate.
 
 ---
 
@@ -89,7 +91,7 @@ A milestone is **Done** only when every box is checked. These are the acceptance
 | Epic | Milestone | Status | Notes |
 | ---- | --------- | ------ | ----- |
 | E0 Foundations | M0 | ✅ 95% | code complete + verified; E0-12 (accounts) + E0-11 (Sentry) outstanding |
-| E1 Catalog ingest | M1 | ⛔ | blocked on accounts; `watchId` (E1-0) already ✅ in shared |
+| E1 Catalog ingest | M1 | 🟡 | TMDB + OpenAI clients + ingest job **built & deno-checked**; `watchId` (E1-0) ✅; resolution (E1-6) + nightly (E1-5) pending; **run** blocked on keys |
 | E2 Netflix capture | M2 | ⬜ | adapter contract + scrobbler + session read + fixtures |
 | E3 Store/profile/sync | M2/M3 | 🟡 | IndexedDB + watchRepo ✅ (E0-5); auth/sync/profile pending |
 | E4 Chat + /recommend | M3 | 🟡 | dock UI shell ✅ (E0-3); retrieval/RAG/ranking pending |
