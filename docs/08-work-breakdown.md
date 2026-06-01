@@ -22,13 +22,15 @@ Owner decision: ship the core loop first, fast-follow the rest. **In Beta 1:**
   E5-9/E5-9a (**CSV import**) · E3-1..E3-6 (auth, sync, profile) · E4-1..E4-9 (**chat + recs**,
   incl. availability links, budget guard) · E3-8 (region) · E5-1/E5-2 (onboarding + consent) ·
   E5-3 (settings incl. family mode + Connect opt-in) · E5-4 (**raw JSON export**) · E5-5
-  (**delete**) · E5-6/E5-7/E5-8 (policy, security gate, eval) · E0-10/E0-11 (budget, telemetry).
+  (**delete**) · E5-6/E5-7/E5-8 (policy, security gate, eval) · E0-10/E0-11 (budget, telemetry) ·
+  **E0-13 (10-user cap)** · **E0-14/E0-15/E0-16 (email sender, new-user alert, daily digest)**.
 - **Fast-follow (deferred, not in first beta):** E3-7 profile-editing polish · **FR-8** CSV
   debug export (E5-10 `GET /profile`, E5-11) · **E6** entirely ("watch next" nudge, cost tuning,
   profile summariser).
 - **Beta-1 gate:** a friend can install (unlisted), verify email, optionally Connect/Import,
   chat, and get explained recommendations with working "Watch on Netflix" / where-to-watch —
-  with consent, delete, and the $25 budget guard all live.
+  with consent, delete, the **10-user cap**, and the **$5** budget guard all live, and the
+  operator getting new-user + daily-usage emails.
 
 ---
 
@@ -48,7 +50,11 @@ Owner decision: ship the core loop first, fast-follow the rest. **In Beta 1:**
 | E0-9 | ESLint/Prettier shared config + conventions | root configs | E0-1 | 🟢 | `pnpm lint` enforces [`09`](09-conventions.md) |
 | E0-10 | **Operational-tables migration** (`rate_limits` + `cost_ledger`) + budget guard + `AT_CAPACITY` | `_shared/budget.ts`, `_shared/rateLimit.ts`, `migrations`, `_shared/metrics.ts` | E0-7 | 🔴 | [`09 §13`](09-conventions.md#13-cost--budget-guard); these infra tables exist **before** the harness rate-limiter/budget check are exercised; ≥100% → graceful `AT_CAPACITY`; fail-safe-allow |
 | E0-11 | Telemetry: anonymous aggregate metrics + Sentry (no-PII, `beforeSend` redactor) | `_shared/metrics.ts`, function init | E0-7 | 🟡 | [`06 §6`](06-security-privacy.md#no-pii); no titles/queries/ids/IP; DSN is a secret |
-| E0-12 | **Provision accounts + secrets** (nothing exists yet): Anthropic, OpenAI, TMDB, Supabase, Sentry, a domain for the policy; set via `supabase secrets set` | ops runbook | — | 🟡 | All keys in Edge Function env only; documented rotation; none in the bundle |
+| E0-12 | **Provision accounts + secrets** (nothing exists yet): Anthropic, OpenAI, TMDB, Supabase, Sentry, **Resend** (transactional email), GitHub Pages for the policy; set via `supabase secrets set` | ops runbook | — | 🟡 | All keys in Edge Function env only (incl. `RESEND_API_KEY`, `OWNER_EMAIL`); documented rotation; none in the bundle |
+| E0-13 | **Closed-beta user cap (`BETA_FULL`)** — refuse the 11th sign-up server-side. Enforce in a Supabase **`before-user-created` auth hook** (or an `AFTER INSERT` trigger on `auth.users` that raises when `count(*) > BETA_MAX_USERS`). | `migrations/000X_beta_cap.sql`, auth-hook fn | E0-6 | 🔴 | New PRD §5/§8 + [`09 §13`](09-conventions.md#13-cost--budget-guard). `BETA_MAX_USERS` env (default **10**). 11th `signInWithOtp` for a *new* email → blocked with `BETA_FULL` ([`03 §0`](03-api-contracts.md#error-codes-closed-set)); existing users + already-capped re-sign-in unaffected. Integration test: seed 10 users → 11th create fails, 10th's re-auth still works. Surfaced as friendly "beta is full" copy in onboarding (E5-1). |
+| E0-14 | **Transactional email sender** (`_shared/email.ts`, Resend client) — shared by E0-15/E0-16; timeout + bounded retry (`withRetry`), failures are non-fatal (log + Sentry, never break the user path) | `_shared/email.ts` | E0-7, E0-12 | 🟢 | Sends to `OWNER_EMAIL` only; no user-facing email in v1; never throws into a request path; unit test mocks the HTTP call |
+| E0-15 | **New-user owner notification** — on first profile creation, email the operator (new user's sign-up email + UTC timestamp). Fire from the **default-profile-create path in `/sync`** (E3-3) or a profiles `AFTER INSERT` trigger + `pg_net`. Best-effort, off the critical path. | `functions/sync/*` or `migrations` (trigger), `_shared/email.ts` | E0-14, E3-3 | 🟡 | One email per new account, idempotent (once per `user_id`); failure logs + alerts but does **not** fail sign-up/sync; disclosed in privacy policy (done) |
+| E0-16 | **Daily owner usage digest** — nightly `pg_cron` job rolls per-user **counts only** (recs served, watches captured, MTD spend, DAU) into an aggregate `metrics_daily` table via a **`SECURITY DEFINER` SQL function** (keeps the service-role JS client off user tables — see [`09 §11`](09-conventions.md#11-service-role-boundary)), then emails the operator the digest. Contains **no titles/queries/chat content**. | `migrations/000Y_metrics_daily.sql` (+ `rollup_daily_metrics()`), `functions/usage-digest/*`, `_shared/email.ts` | E0-10, E0-14 | 🟡 | New PRD §5 Observability. `metrics_daily` is aggregate (no PII/content), added to the service-role allowlist ([`09 §11/§12`](09-conventions.md#11-service-role-boundary)); `pg_cron` schedule documented; digest e-mail renders per-user count rows + total spend vs `$5`; AC: a seeded day produces a digest with correct counts and zero content fields |
 
 ---
 
@@ -90,7 +96,7 @@ Owner decision: ship the core loop first, fast-follow the rest. **In Beta 1:**
 
 | # | Ticket | Files | Deps | Diff | DoD |
 |---|--------|-------|------|------|-----|
-| E3-1 | **(critical path)** Auth in SW: email **OTP** (`signInWithOtp`/`verifyOtp`) + session in `chrome.storage.session` | `background/auth.ts`, `onboarding.html` | E0-3 | 🔴 | OTP flow [`03 §5`](03-api-contracts.md#5-auth-email-otp-code--resolves-review-b4); token rules [`06 §3`](06-security-privacy.md#token-handling); refresh handled |
+| E3-1 | **(critical path)** Auth in SW: email **OTP** (`signInWithOtp`/`verifyOtp`) + session in `chrome.storage.session` | `background/auth.ts`, `onboarding.html` | E0-3, E0-13 | 🔴 | OTP flow [`03 §5`](03-api-contracts.md#5-auth-email-otp-code--resolves-review-b4); token rules [`06 §3`](06-security-privacy.md#token-handling); refresh handled; **handles `BETA_FULL`** from the cap (E0-13) with friendly "beta is full" copy, not a generic error |
 | E3-2 | User-feature migrations + RLS (`profiles`, `watches`, `taste_signals`, `excluded_titles`, `chat_threads`; `rate_limits` RLS) — note `rate_limits`/`cost_ledger` tables are created earlier in E0-10 | `migrations/0002,0003` | E0-6, E0-10 | 🔴 | RLS isolation across all 6 user tables passes ([`07 §3`](07-qa-test-plan.md)) |
 | E3-3 | `POST /sync` Edge Function (LWW upsert-by-id + delta pull incl. excludes + **settings↔profiles** + default-profile create) | `functions/sync/*` | E3-2,E1-0,E0-7 | 🔴 | Contract [`03 §2`](03-api-contracts.md#2-post-sync); idempotent; deterministic-id convergence (B2); excludes in serverChanges (M1); settings upsert profiles (LWW) |
 | E3-4 | Outbox + sync engine (debounce + `chrome.alarms`) | `background/sync.ts` | E0-5,E3-1,E3-3 | 🔴 | Drains outbox; applies serverChanges; advances cursor; resumes after eviction |
@@ -159,7 +165,9 @@ Before publishing the extension (beta):
 - [ ] Catalog ingested + nightly job scheduled and verified.
 - [ ] Edge Functions deployed; secrets set via `supabase secrets set`; CORS allowlist = the
       published extension id.
-- [ ] Rate limits + cost circuit-breaker enabled.
+- [ ] Rate limits + cost circuit-breaker enabled; **`MONTHLY_BUDGET_USD=5`, `BETA_MAX_USERS=10`** set.
+- [ ] 10-user cap verified (11th sign-up → `BETA_FULL`); new-user + daily-digest emails delivering
+      to `OWNER_EMAIL` (`pg_cron` schedule confirmed); `metrics_daily` rollup contains no content.
 - [ ] Privacy policy live and linked from onboarding + store listing.
 - [ ] Manual smoke on real Netflix passed ([`07 §7`](07-qa-test-plan.md#7-pre-release-manual-smoke-checklist)).
 - [ ] Key rotation runbook documented (how to rotate Anthropic/OpenAI/TMDB/Supabase keys

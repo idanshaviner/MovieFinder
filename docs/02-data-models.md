@@ -159,6 +159,18 @@ create table cost_ledger (
 );
 -- The recommend/embed paths increment estimated cost (from token counts) atomically; a shared
 -- budget guard reads month-to-date vs MONTHLY_BUDGET_USD and degrades gracefully when ≥ ceiling.
+
+-- AGGREGATE per-user daily COUNTS for the operator usage digest (closed 10-user beta).
+-- Counts only — NEVER titles/queries/chat content. Populated by a nightly SECURITY DEFINER
+-- rollup (08 E0-16) so the service-role client never reads user content tables (09 §11).
+-- Service-role-readable (like cost_ledger); never exposed to extension clients.
+create table metrics_daily (
+  day            date not null,             -- UTC day
+  user_id        uuid not null references auth.users on delete cascade,
+  recs_served    integer not null default 0,
+  watches_added  integer not null default 0,
+  primary key (day, user_id)
+);
 ```
 
 ### 1.3 Row-Level Security (🔒 non-optional)

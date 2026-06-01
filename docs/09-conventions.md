@@ -56,7 +56,7 @@ Model id: `claude-haiku-4-5-20251001`. Embedding model: `text-embedding-3-small`
   (2), rate-limit values, model ids (`claude-haiku-4-5-20251001`, `text-embedding-3-small`),
   `APP_NAME` ("MovieFinder").
 - Backend-only env: API keys, `MONTHLY_BUDGET_USD` (default 5), `EMBED_COST_CEILING_USD` (3),
-  Sentry DSN, CORS allowlist.
+  `BETA_MAX_USERS` (default 10), `RESEND_API_KEY`, `OWNER_EMAIL`, Sentry DSN, CORS allowlist.
 
 ## 6. Git & PR workflow
 - Branch per ticket: `e2/netflix-scrobbler`. Small PRs (< ~400 lines diff where possible).
@@ -99,9 +99,13 @@ cross-user data leak (review m5):
 - **Caller-JWT client** (built from the request's `Authorization` header) — used for **all
   user tables** (`watches`, `taste_signals`, `excluded_titles`, `chat_threads`, `rate_limits`,
   `profiles`). RLS applies, so it can only see the caller's rows.
-- **Service-role client** — **bypasses RLS**. Used for **catalog tables only**
-  (`catalog_titles`, `catalog_embeddings`) and the catalog-ingest job. ⚠️ It must **never**
-  read or write a user table.
+- **Service-role client** — **bypasses RLS**. Used for **catalog tables**
+  (`catalog_titles`, `catalog_embeddings`) + the catalog-ingest job, plus the **aggregate-only**
+  operational tables `cost_ledger` and `metrics_daily` (counts/spend, **no titles/queries/content**).
+  ⚠️ It must **never** read or write a per-user content table (`watches`, `taste_signals`,
+  `excluded_titles`, `chat_threads`, `profiles`). The daily-digest rollup ([`08 E0-16`](08-work-breakdown.md))
+  reads user tables only inside a `SECURITY DEFINER` SQL function that emits counts into
+  `metrics_daily` — the service-role JS client never touches them directly.
 - Enforcement: the two clients are constructed by separate helpers
   (`_shared/userClient.ts` vs `_shared/serviceClient.ts`); `serviceClient` is lint-restricted
   (an ESLint `no-restricted-imports`/grep CI check) so it can only be imported by catalog/ingest
@@ -116,7 +120,8 @@ cross-user data leak (review m5):
 - Every Edge Function: **auth → validate (zod) → rate-limit → budget check → work**, in order
   (matches [`01 §2`](01-architecture.md#2-trust-boundary) and [`03 §1`](03-api-contracts.md#1-post-recommend-core)).
 - Nothing but auth touches the network before `settings.consentedAt` is set.
-- The service-role client touches **catalog + `cost_ledger` only**, never user tables (§11).
+- The service-role client touches **catalog + `cost_ledger` + `metrics_daily` only** (all
+  aggregate/no-content), never per-user content tables (§11).
 
 ## 13. Cost & budget guard {#13-cost--budget-guard}
 v1 is a **closed beta capped at 10 users** (enforced server-side at sign-up); spend is still
