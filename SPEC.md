@@ -334,9 +334,12 @@ query + profile ──► embed query (OpenAI) ──► pgvector top-K candidat
 | **Security**   | No secrets in bundle; RLS per user; least-privilege host perms (`netflix.com` only in v1); CORS locked. [`docs/06`](docs/06-security-privacy.md) |
 | **Resilience** | Versioned adapters; every external call wrapped with timeout + retry + graceful degrade. [`docs/09`](docs/09-conventions.md) |
 | **Performance**| Injected UI never blocks the player (idle-mount, `requestIdleCallback`); LLM calls async with skeleton states; embeddings cached. |
-| **Cost**       | Haiku + prompt cache + small candidate sets (K=40 default, ≤60); per-user daily caps **+ global monthly budget kill-switch** with graceful degradation (open sign-up). [`docs/09`](docs/09-conventions.md#13-cost--budget-guard) |
-| **Observability** | Anonymous **aggregate** metrics + **error monitoring** (Sentry) — never PII/content; client error ring-buffer; adapter health pings. [`docs/06`](docs/06-security-privacy.md#no-pii) |
-| **Localization** | Availability/where-to-watch use the user's **auto-detected region** (overridable); catalog is international multi-language. |
+| **Cost**       | **Free-first** (stay in free tiers; $0 fixed, ≤$5/mo variable); Haiku + prompt cache + small candidate sets (K=40 default, ≤60); per-user daily caps (25/day) **+ global `$5` monthly budget kill-switch** with graceful degradation; **10-user cap** bounds spend. [`docs/09`](docs/09-conventions.md#13-cost--budget-guard) · [`PRD §8`](PRD.md#8-cost-model) |
+| **Observability** | **Spend-vs-$5-budget** first; usage/latency/error/adapter-health **aggregate** metrics + **Sentry** errors + **daily owner email digest** — never PII/content; client error ring-buffer; adapter health pings. [`docs/06`](docs/06-security-privacy.md#no-pii) |
+| **Localization** | Availability/where-to-watch use the user's **auto-detected content region** (overridable); catalog is international multi-language. Backend deployed in **`us-east-1`**. |
+| **Distribution** | **Closed beta — 10-user hard cap enforced server-side** (`BETA_FULL` on the 11th sign-up); Chrome Web Store **unlisted** (does not limit installs → cap lives in the backend); owner alerted per new user + daily usage email. |
+| **QA / testing** | Release-gating five-level pyramid (unit/integration/adapter/E2E/manual eval); CI lint→typecheck→unit→integration→build green to merge; 0-tolerance invariants + release gate (all ACs, 0 S1, 0 known S2, security sign-off). [`docs/07`](docs/07-qa-test-plan.md) |
+| **Portability** | MV3 Chromium-first; Firefox + **Safari** out of v1 but de-risked (`webextension-polyfill`, no Chrome-only APIs). Safari additionally needs a native wrapper + App Store + $99/yr Apple fee. |
 | **Accessibility** | Right-dock chat panel keyboard-navigable, focus-trapped, ARIA-labelled, respects `prefers-reduced-motion`; theme-aware (light/dark). |
 
 ---

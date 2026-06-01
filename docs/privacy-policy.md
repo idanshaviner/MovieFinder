@@ -45,6 +45,16 @@ We do **not** send your email, your identity, or your full history to these comp
 - Our diagnostics (aggregate usage counts + crash reports) contain **no** titles, queries,
   email, account id, or IP-derived identity.
 
+## Closed beta — operator visibility
+
+MovieFinder is currently a **closed beta limited to 10 users**. To run the service within a tiny
+budget, the operator receives **operational summaries**: a notification when a new user signs up
+(your sign-up email + time) and a **daily usage report** (per-account counts such as
+recommendations served and titles captured, plus total spend). These summaries are used **only**
+to operate and support the beta — never sold, never used for advertising. They do **not** include
+your chat messages or the specific titles in your history. (This operator visibility is distinct
+from the anonymous diagnostics below.)
+
 ## "Connect your Netflix" (optional)
 
 This is **off until you turn it on**. It reads your own Netflix viewing list from your

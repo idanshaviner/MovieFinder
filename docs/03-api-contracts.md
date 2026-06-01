@@ -95,7 +95,8 @@ exact title-page from `platform_ids[currentSite]` if known, else a `currentSite`
 upsert the turn into the `chat_threads` row keyed by `threadId` → respond. **Availability and
 links are set server-side; `playDeepLink` is left for the client.**
 
-**Rate limit (default):** 60 calls / user / day, burst 10 / minute.
+**Rate limit (default):** 25 calls / user / day, burst 10 / minute (re-tuned down from 60 to fit
+the $5 monthly budget across the ≤10-user closed beta — see [`09 §13`](09-conventions.md#13-cost--budget-guard)).
 
 **Timeout ladder (🔒, resolves review M4):** OpenAI embed ≤ 4s, Claude ≤ 12s, **server total
 ≤ 14s** → the client's `/recommend` timeout is **18s** (> server, so the server's typed error

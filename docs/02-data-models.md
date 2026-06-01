@@ -149,7 +149,7 @@ create table rate_limits (
   primary key (user_id, route, window_start)
 );
 
--- GLOBAL spend ledger for the monthly budget kill-switch (open sign-up; cost defense).
+-- GLOBAL spend ledger for the monthly budget kill-switch (closed 10-user beta; cost defense).
 -- NOT user-scoped → no RLS, service-role only, never readable by clients. One row per month.
 create table cost_ledger (
   month        date primary key,           -- first of month (UTC)

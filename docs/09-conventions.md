@@ -55,7 +55,7 @@ Model id: `claude-haiku-4-5-20251001`. Embedding model: `text-embedding-3-small`
   (0.90), `K_DEFAULT` (40) / `K_CAP` (60), `OFF_PLATFORM_MARGIN` (δ=0.05), `FAMILY_MAX_MATURITY`
   (2), rate-limit values, model ids (`claude-haiku-4-5-20251001`, `text-embedding-3-small`),
   `APP_NAME` ("MovieFinder").
-- Backend-only env: API keys, `MONTHLY_BUDGET_USD` (default 25), `EMBED_COST_CEILING_USD` (3),
+- Backend-only env: API keys, `MONTHLY_BUDGET_USD` (default 5), `EMBED_COST_CEILING_USD` (3),
   Sentry DSN, CORS allowlist.
 
 ## 6. Git & PR workflow
@@ -119,11 +119,15 @@ cross-user data leak (review m5):
 - The service-role client touches **catalog + `cost_ledger` only**, never user tables (§11).
 
 ## 13. Cost & budget guard {#13-cost--budget-guard}
-Because sign-up is **open**, spend is defended in depth:
-- **Per-user caps** (the `rate_limits` table): e.g. `/recommend` 60/day, burst 10/min.
+v1 is a **closed beta capped at 10 users** (enforced server-side at sign-up); spend is still
+defended in depth so a single user can't drain the budget:
+- **User cap:** sign-up Edge Function refuses the 11th profile (`BETA_FULL`) — the first line of
+  spend defense.
+- **Per-user caps** (the `rate_limits` table): `/recommend` **25/day**, burst 10/min (re-tuned
+  down from 60 so fair-share of the $5 budget across ≤10 users holds — see [`PRD §8`](../PRD.md#8-cost-model)).
 - **Global monthly kill-switch:** a shared `_shared/budget.ts` reads month-to-date estimated
   spend from `cost_ledger` (LLM + embeddings) and compares to `MONTHLY_BUDGET_USD` (env,
-  **default `25`**).
+  **default `5`**).
   - At **≥ 80%** → log a warning + emit an alert (Sentry) for the operator.
   - At **≥ 100%** → `/recommend` (and other paid paths) **degrade gracefully**: return a
     friendly `error.code = "AT_CAPACITY"` (retryable later, **not** a 500) so the UI shows

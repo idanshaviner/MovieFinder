@@ -53,7 +53,10 @@ not affiliated with Netflix.
   (your chat messages), tied to an email used for authentication.
 - **Use:** solely to provide the recommendation feature. **Not** sold; **not** used for
   advertising or for purposes unrelated to the single purpose.
-- **Link to privacy policy:** `<https://your-domain/privacy>` (host the policy in `docs/privacy-policy.md`).
+- **Link to privacy policy:** `<https://your-domain/privacy>` — host `docs/privacy-policy.md` for
+  **free on GitHub Pages** (no paid domain needed for v1).
+- **Access:** **closed beta, capped at 10 users** — the cap is enforced **server-side at sign-up**
+  (an unlisted listing hides the item from search but does *not* limit installs).
 
 ## Assets to prepare
 - Icon (128×128) + small promo tile.

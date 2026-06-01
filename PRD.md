@@ -40,16 +40,17 @@ It learns from two signals:
 | **MVP platform**   | Netflix only first; expand to other platforms if it succeeds             |
 | **Watch capture**  | Three lanes → one pipeline: **live scrobble** (FR-1), **in-session Netflix history read** (FR-9, "Connect"), **CSV import** (FR-7). "finished" = **≥90% played** (configurable) |
 | **LLM**            | Claude Haiku 4.5 (`claude-haiku-4-5-20251001`), prompt caching on system + profile |
-| **Embeddings**     | **OpenAI `text-embedding-3-small`** (1536-dim) — single model, no mixing |
+| **Embeddings**     | **OpenAI `text-embedding-3-small`** (1536-dim) — single model, no mixing. _Kept on a second provider deliberately:_ it is **multilingual** (free local options like Supabase `gte-small` are English-biased and would hurt the international catalog), its cost is **negligible** (< $1 one-time + ~$0/query), and both keys live in the **one** Edge-secret store, so the operational overhead of the split is ~zero |
 | **Vector search**  | pgvector on Supabase Postgres (cosine, `ivfflat`)                        |
 | **Metadata**       | TMDB (catalog + posters + watch providers)                               |
 | **Backend**        | **Supabase** Edge Functions (Deno) — the only backend we run; holds all API keys (chosen over bring-your-own-key) |
-| **Auth**           | Supabase Auth, email OTP (6-digit, in-extension, one-time); **open sign-up**; email = identity |
+| **Auth**           | Supabase Auth, email OTP (6-digit, in-extension, one-time); **closed beta — hard cap of 10 users**, enforced server-side (waitlist beyond); email = identity |
 | **Data storage**   | Local working copy in IndexedDB; durable cross-device copy in Supabase Postgres (RLS per user); non-real-time outbox sync |
-| **Region**         | **Auto-detected per user** (overridable); international **multi-language** catalog |
-| **Cost/abuse**     | Per-user daily caps **+ global monthly budget kill-switch** (graceful degradation) |
-| **Observability**  | Anonymous aggregates + error monitoring (Sentry); **never** PII/content |
-| **Distribution**   | Chrome Web Store **unlisted** (share-link + auto-update)                 |
+| **Content region** | **Auto-detected per user** (overridable); international **multi-language** catalog |
+| **Deployment**     | Backend in **Supabase `us-east-1`** (N. Virginia) — near the beta cohort + the US model endpoints (providers are global; region mainly affects DB latency/egress) |
+| **Cost/abuse**     | **Free-first architecture** (stay in free tiers); per-user daily caps **+ global `$5`/mo budget kill-switch** (graceful degradation); the 10-user cap bounds spend |
+| **Observability**  | **Spend-vs-$5-budget** dashboard + usage/latency/error/adapter-health aggregates + Sentry errors + **daily owner email digest**; **never** PII/content in telemetry |
+| **Distribution**   | Chrome Web Store **unlisted** (share-link + auto-update); **install cap (10 users) enforced server-side** — unlisted hides the listing but does **not** limit installs |
 | **Codebase**       | TypeScript (strict) pnpm monorepo; Preact + Vite + CRXJS extension       |
 | **Browser**        | Manifest V3, Chromium-first (Chrome/Edge/Brave/Arc)                      |
 
@@ -194,26 +195,71 @@ These do not block the project but must shape expectations:
 - **Resilience.** Per-site adapter pattern, versioned, with graceful failure.
 - **Performance.** In-page UI must never jank the player; async LLM calls with clear
   loading states; cache embeddings.
-- **Cost control.** Prompt caching on static system prompt + taste profile; small
-  retrieved candidate sets; Haiku-by-default. Target ≈ half a cent per conversation. Because
-  sign-up is **open**, defense-in-depth on spend: per-user daily caps **and** a **global
-  monthly budget kill-switch** that degrades recommendations gracefully ("we're at capacity")
-  instead of running up an unbounded bill.
-- **Observability (privacy-preserving).** Anonymous **aggregate** metrics (recs served, latency,
-  error rates) + backend **error monitoring** (e.g. Sentry) — **never** titles, queries, emails,
-  user ids, or IP-derived identity. Disclosed in the privacy policy. (This refines the earlier
-  "no telemetry" stance: aggregates + crash tracking are allowed; PII/content is not.)
+- **Cost minimization (free-first — a top operational goal).** The architecture is designed to
+  run at **≈ $0 fixed cost** plus a **capped ≤ $5/mo variable cost**:
+  - **Stay inside free tiers.** Supabase free tier (DB, 2 GB/mo egress, edge-function invocations,
+    `pg_cron`) comfortably covers ≤ 10 users; the **10-user cap guarantees we never need the
+    $25/mo Supabase Pro tier**. No always-on servers or containers — edge functions are
+    invocation-billed only. Vector search on pgvector is **$0/query** (no managed-vector vendor).
+    Sentry (errors), transactional email (e.g. Resend), and the privacy-policy host (GitHub Pages)
+    all run on free tiers; **no paid domain required**.
+  - **Minimize the one variable cost (LLM).** Prompt caching on the static system prompt + taste
+    profile; small retrieved candidate sets; Haiku-by-default; short outputs. Embeddings are a
+    one-time catalog cost (< $1) plus a negligible, cached per-query cost. Target ≈ half a cent
+    per conversation.
+  - **Hard ceiling, defended in depth.** The **10-user cap** bounds the population; **per-user
+    daily caps** prevent any one user eating the budget; a **global `MONTHLY_BUDGET_USD` = $5
+    kill-switch** degrades recommendations gracefully ("we're at capacity") rather than running
+    up an unbounded bill. See [§8 Cost model](#8-cost-model).
+- **Observability (privacy-preserving, spend-first).** The **North-star operational metric is
+  month-to-date spend vs the $5 budget** (per-model token spend, cost/conversation, % of budget,
+  projected month-end), read from `cost_ledger`. Alongside it: **usage** (recs served/day, daily
+  active users, signups vs the 10-cap), **health** (`/recommend` p50/p95 latency, error rate by
+  code, Claude/OpenAI/TMDB upstream failure rate, sync success rate), **quality** (grounding-gate
+  drop rate — should be ≈ 0; pgvector no-match rate), and **adapter health** (Netflix scrobble
+  health-ping failures, low-confidence title-resolution rate — our early warning for DOM drift).
+  Delivery is free-tier: **Sentry** for errors/crashes, a Postgres **metrics rollup** (`pg_cron`)
+  surfaced in the Supabase dashboard, and the **daily owner email digest** (see Distribution).
+  Telemetry **never** contains a title, query, email, `user_id`, JWT, or IP. Disclosed in the
+  privacy policy. (This refines the earlier "no telemetry" stance: aggregates + crash tracking
+  are allowed; PII/content is not.)
 - **Localization / region.** Availability + where-to-watch use the user's **auto-detected
   region** (overridable in settings); the embedded catalog is **international, multi-language**
   popular + top-rated so non-US/non-English users get good matches. The **UI chrome is
   English-only in v1**; the chatbot itself converses in whatever language the user writes.
-- **Compatibility.** Manifest V3, Chromium-first (Chrome/Edge/Brave/Arc); Firefox later.
+- **Quality assurance & testing (release-gating).** Testing is a requirement, not a courtesy.
+  A five-level pyramid — **unit** (scoring, dedupe, the **grounding gate**, sync LWW, scrobble
+  finish logic, zod schemas), **integration** against a local Supabase (RLS isolation, sync
+  identity, `/recommend` + `/catalog/resolve`, the budget kill-switch), **adapter** fixtures
+  (Netflix DOM shapes + a "selectors changed" variant to prove graceful failure), **E2E**
+  (Playwright on a fixture page: onboarding, consent gate, chat cold-start, capture,
+  export/delete), and a **manual golden-set rec eval** before each release. CI gates every PR
+  (**lint → typecheck → unit → integration → build — green to merge**). The no-PII-telemetry
+  assertion and the **0-tolerance** invariants (no hallucinated/watched title ever shipped, no
+  cross-user data leak, no secret in the bundle, page never broken) are explicit gates.
+  **Release requires all acceptance criteria green, 0 S1, 0 known S2, and the security gate
+  signed off.** Full plan: [`docs/07-qa-test-plan.md`](docs/07-qa-test-plan.md).
+- **Compatibility & portability.** Manifest V3, Chromium-first (Chrome/Edge/Brave/Arc). **Firefox
+  and Safari are out of scope for v1** but de-risked now: code to the WebExtension standard
+  (`browser.*` via `webextension-polyfill`, no Chrome-only APIs), and keep the site adapter and
+  UI browser-agnostic, so a later port is a **wrapper job, not a rewrite**. ⚠️ Safari additionally
+  requires a native Xcode wrapper, App-Store distribution (no share-link install), and the **$99/yr
+  Apple Developer fee** — which is why it stays out of the free v1.
 - **Trust/accuracy.** Always show "why"; never recommend non-existent titles.
 
 ### Distribution & access (v1 beta)
-- **Open sign-up** (anyone with an email; one-time OTP verification, persistent session).
-- **Chrome Web Store, unlisted** (share-link install + auto-update); requires a published
-  privacy policy and basic store assets.
+- **Closed beta — hard cap of 10 users**, enforced **server-side at sign-up** (an Edge Function
+  counts existing profiles; the 11th sign-up is refused with a friendly "beta is full" / waitlist
+  message; OTP verification + persistent session otherwise). ⚠️ An **unlisted** Chrome Web Store
+  listing only hides the item from search — *anyone with the share link can still install it* — so
+  the cap **must** live in the backend, never in the store.
+- **Owner notified of every new user** — on first profile creation, a transactional email/alert is
+  sent to the operator (new user's sign-up email + timestamp).
+- **Daily usage report to the owner** — a nightly `pg_cron` job emails the operator a per-user
+  digest (recs served, watches captured, month-to-date spend, active users), reusing the metrics
+  rollup above. ℹ️ This operator visibility into per-user activity is disclosed in the privacy policy.
+- **Chrome Web Store, unlisted** (share-link install + auto-update); requires a published privacy
+  policy and basic store assets.
 
 ---
 
@@ -278,16 +324,42 @@ recommendations are always computed server-side so grounding and keys stay serve
 
 ## 8. Cost model
 
+**Deployment region:** backend in **Supabase `us-east-1`** (N. Virginia) — near the US beta cohort
+and the US Anthropic/OpenAI/TMDB endpoints. The model providers are themselves global, so region
+mainly affects DB latency and egress, not model cost.
+
+### Fixed / subscription cost — target **$0**
+
+| Item | Plan | Cost |
+| ---- | ---- | ---- |
+| Supabase (DB, edge fns, `pg_cron`, egress) | Free tier | **$0** — the 10-user cap keeps us under the free ceilings, so the $25/mo Pro tier is never needed |
+| Sentry (error/crash monitoring) | Free (Developer) | **$0** |
+| Transactional email (new-user alert + daily report, e.g. Resend) | Free tier (~100/day) | **$0** |
+| Privacy-policy hosting (GitHub Pages) | Free | **$0** — no paid domain |
+| Apple Developer (only if Safari — out of scope) | — | $99/yr — **not incurred in v1** |
+
+**Data transfer / egress:** payloads are small JSON and posters load **directly from the TMDB
+image CDN** (never proxied through us), so our egress is a small fraction of Supabase's free
+2 GB/mo. ≈ **$0**.
+
+### Variable cost (LLM) — capped at **$5/mo**
+
 - **One-time:** embed the international, multi-language TMDB catalog (~100–150K titles) →
   **~$0.30–$0.60 once** (ingest job aborts above `EMBED_COST_CEILING_USD`, default $3).
-- **Per conversation:** ~3K input + ~600 output tokens on Haiku 4.5 ≈ **~$0.005**.
-  ~$5 ≈ a thousand recommendation conversations. ⚠️ Budget against this **uncached** figure:
-  the prompt cache has a ~5-min TTL, and sporadic beta usage will usually miss it — treat
-  caching as upside, not a reliable halving.
-- **Spend ceiling:** open sign-up is bounded by per-user daily caps **and** a global
-  **`MONTHLY_BUDGET_USD` kill-switch (default $25)** that degrades to "at capacity" rather than
-  running up the bill.
-- **Vector search:** $0 per query (pgvector on Supabase Postgres).
+- **Per conversation:** ~3K input + ~600 output tokens on Haiku 4.5 ≈ **~$0.005** uncached.
+  ⚠️ Budget against the **uncached** figure: the prompt cache has a ~5-min TTL and sporadic beta
+  usage will usually miss it — treat caching as upside, not a reliable halving.
+- **Per-query embedding:** one short OpenAI `text-embedding-3-small` call ≈ **~$0.000002** (cached
+  per identical query) — negligible.
+- **Vector search:** **$0/query** (pgvector on Supabase Postgres).
+
+**Spend ceiling:** `MONTHLY_BUDGET_USD` = **$5** (was $25). $5 ≈ ~1,000 uncached conversations/mo.
+Defended in depth: (1) the **10-user cap** bounds the population; (2) **per-user daily caps**
+re-tuned down to **~25 `/recommend`/user/day** (burst 10/min) — fair-share of $5 across ≤ 10 users
+is ~100 convos/user/mo; (3) the **global $5 kill-switch** degrades to "at capacity" rather than
+running up the bill, with an alert at 80%.
+
+**All-in realistic monthly cost: ≈ $0 fixed + ≤ $5 variable.**
 
 ---
 
@@ -313,7 +385,8 @@ recommendations are always computed server-side so grounding and keys stay serve
   copy with RLS). Real-time multi-device sync remains out of scope.
 
 **Explicitly out of scope for v1** (tracked here, re-specced when prioritized — see [`SPEC.md`](SPEC.md) §13):
-- Firefox support.
+- Firefox and **Safari** support (de-risked via the WebExtension-standard portability note in §5;
+  Safari also needs a native Xcode wrapper, App-Store distribution, and the $99/yr Apple fee).
 - Bring-your-own-key option for privacy-maximalist users.
 - Non-Netflix **live** site adapters (one-time Netflix CSV import *is* in v1 — see FR-7).
 - Additional cold-start import lanes: Letterboxd/IMDb tracker CSV, browser-history scan
