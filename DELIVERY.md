@@ -11,10 +11,10 @@
 ✅ done & verified · 🟢 in progress · 🟡 partial / stubbed · ⛔ blocked · ⬜ not started
 
 ### Snapshot (where we are right now)
-- **The entire testable core is built & verified — 52 tests green** (28 Vitest + 24 Deno):
-  extension shell + **Netflix capture adapter/scrobbler**, backend harness, migrations (run on real
-  PG+pgvector), E1 (TMDB/OpenAI/ingest/resolution), and the E4 recommender brain (grounding gate,
-  ranking, providers, prompt, Claude client).
+- **The entire testable core is built & verified — 59 tests green** (35 Vitest + 24 Deno):
+  extension shell + **Netflix capture adapter/scrobbler** + **store layer (settings, export/delete,
+  consent gate)**, backend harness, migrations (run on real PG+pgvector), E1 (TMDB/OpenAI/ingest/
+  resolution), and the E4 recommender brain (grounding gate, ranking, providers, prompt, Claude client).
 - **Only two recommender pieces remain — retrieval SQL (E4-2) + the `/recommend` handler (E4-4) —
   and both REQUIRE the live DB + LLM.** We are now genuinely at the keys boundary.
 - **Hard blocker = E0-12 (yours):** provision Supabase + TMDB/OpenAI/Anthropic keys → I run the
@@ -97,7 +97,7 @@ A milestone is **Done** only when every box is checked. These are the acceptance
 | E2 Netflix capture | M2 | 🟡 | **adapter contract + scrobbler state machine + title parsing built & tested (12 vitest)**; SW capture wiring (E2-6, needs resolve endpoint) + session read (E2-10) pending |
 | E3 Store/profile/sync | M2/M3 | 🟡 | IndexedDB + watchRepo ✅ (E0-5); auth/sync/profile pending |
 | E4 Chat + /recommend | M3 | 🟡 | dock UI shell ✅; **grounding gate, availability ranking, providers, prompt builder, Anthropic + OpenAI + TMDB clients all built & tested**; only **retrieval SQL (E4-2) + /recommend handler (E4-4)** remain — both need the live DB/LLM (keys) |
-| E5 Settings/onboarding/privacy | M4 | ⬜ | — |
+| E5 Settings/onboarding/privacy | M4 | 🟡 | **settings store, export/delete manifest, consent gate built & tested (7 tests)**; onboarding/settings UI + server-delete wiring pending |
 | E6 Nudge + tuning | M6 | ⬜ | post-beta |
 
 ---
