@@ -75,11 +75,19 @@ jobs:
         run: |
           psql -h localhost -U postgres -d mf -v ON_ERROR_STOP=1 -c "
             create schema if not exists auth;
-            create table auth.users (id uuid primary key default gen_random_uuid());
+            create table auth.users (id uuid primary key default gen_random_uuid(),
+                                     email_confirmed_at timestamptz);
             create or replace function auth.uid() returns uuid language sql stable as \$\$ select '00000000-0000-0000-0000-000000000000'::uuid \$\$;"
           for f in packages/backend/supabase/migrations/*.sql; do
             echo "applying $f"; psql -h localhost -U postgres -d mf -v ON_ERROR_STOP=1 -f "$f";
           done
+
+      - name: Behavioral tests for the cost/abuse guards (0005/0006)
+        env:
+          PGPASSWORD: pw
+        run: |
+          psql -h localhost -U postgres -d mf -v ON_ERROR_STOP=1 \
+            -f packages/backend/supabase/tests/cost_guards.test.sql
 
   secret-scan:
     runs-on: ubuntu-latest
