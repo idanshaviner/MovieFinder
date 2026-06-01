@@ -14,7 +14,7 @@
 | Auth tokens               | Stolen by the host page (Netflix or an XSS)    | Tokens in `chrome.storage.session`, never in page context |
 | User viewing history      | Leaked via logs/telemetry                      | No-PII logging rule; no content in logs          |
 | The injected UI           | Page CSS/JS interfering or scraping it         | Shadow DOM isolation; no secrets in DOM          |
-| Backend abuse             | A valid user hammering / running up LLM cost   | **Atomic** per-user caps (monthly 100 + daily 15) sized so caps × 10-user beta cap = the $5 budget; global kill-switch backstop ([`09 §13`](09-conventions.md#13-cost--budget-guard)) |
+| Backend abuse             | A valid user hammering / running up LLM cost   | **Atomic** per-user caps (monthly 75 + daily 15) sized so caps × 10-user beta cap (`75×10×$0.006=$4.50`) ≤ the $5 budget; global kill-switch backstop ([`09 §13`](09-conventions.md#13-cost--budget-guard)) |
 | Sign-up / OTP flooding    | Anyone with the share link spamming `signInWithOtp` to burn the Supabase email quota (and the 11th-user cap fires only at verify) | **Supabase Auth built-in rate limits** (per-IP + per-email OTP-send throttle) — set conservatively for the beta; the **10-user `BETA_FULL` cap** ([`08 E0-13`](08-work-breakdown.md)) bounds real accounts; no custom SMTP spend |
 
 Out of scope for v1: nation-state adversaries, defeating a malicious browser, DRM/anti-bot

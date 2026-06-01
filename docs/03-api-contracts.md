@@ -96,9 +96,9 @@ exact title-page from `platform_ids[currentSite]` if known, else a `currentSite`
 upsert the turn into the `chat_threads` row keyed by `threadId` → respond. **Availability and
 links are set server-side; `playDeepLink` is left for the client.**
 
-**Rate limit (default):** **100 / user / month** (the budget-share cap) **+ 15 / user / day**
-(burst), both incremented atomically. The monthly cap × the 10-user beta cap × ~$0.005 = the $5
-budget, so the caps alone bound spend — see [`09 §13`](09-conventions.md#13-cost--budget-guard).
+**Rate limit (default):** **75 / user / month** (the budget-share cap) **+ 15 / user / day**
+(burst), both incremented atomically. `75 × 10 users × ~$0.006 = $4.50 ≤ $5`, so the caps alone
+bound spend (unit-test-enforced) — see [`09 §13`](09-conventions.md#13-cost--budget-guard).
 
 **Timeout ladder (🔒, resolves review M4):** OpenAI embed ≤ 4s, Claude ≤ 12s, **server total
 ≤ 14s** → the client's `/recommend` timeout is **18s** (> server, so the server's typed error

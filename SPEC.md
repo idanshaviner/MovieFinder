@@ -306,9 +306,9 @@ query + profile ──► embed query (OpenAI) ──► pgvector top-K candidat
 - 🔒 **Strict grounding:** the model may only return titles whose TMDB id was in the
   retrieved candidate set. Any hallucinated id is dropped server-side before responding.
 - 🔒 **Prompt caching:** static system prompt + the user's taste profile are sent as
-  cached blocks; only the query + candidate list are fresh per call. Target ≈ $0.005/convo
+  cached blocks; only the query + candidate list are fresh per call. ≈ $0.004/convo
   **when the cache is warm** — for sporadic beta usage the 5-min cache TTL often lapses, so
-  budget against the uncached ≈$0.005 figure and treat caching as upside (see [`docs/05 §4`](docs/05-recommendation-engine.md#4-cost-model-in-practice)).
+  budget against the **uncached ≈$0.006** figure and treat caching as upside (see [`docs/05 §4`](docs/05-recommendation-engine.md#4-cost-model-in-practice)).
 - 🔒 **Availability-aware ranking (FR-4).** Retrieve platform-agnostically; **prioritize
   titles on the user's current platform**. Include an off-platform title only when it beats the
   best on-platform candidate by a margin (the "much better" rule), and then the reply **must
@@ -334,7 +334,7 @@ query + profile ──► embed query (OpenAI) ──► pgvector top-K candidat
 | **Security**   | No secrets in bundle; RLS per user; least-privilege host perms (`netflix.com` only in v1); CORS locked. [`docs/06`](docs/06-security-privacy.md) |
 | **Resilience** | Versioned adapters; every external call wrapped with timeout + retry + graceful degrade. [`docs/09`](docs/09-conventions.md) |
 | **Performance**| Injected UI never blocks the player (idle-mount, `requestIdleCallback`); LLM calls async with skeleton states; embeddings cached. |
-| **Cost**       | **Free-first** (stay in free tiers; $0 fixed, ≤$5/mo variable); Haiku + prompt cache + small candidate sets (K=40 default, ≤60); **self-enforcing per-user caps** (monthly 100 + daily 15, atomic — `100 × 10 users × $0.005 = $5`) **+ global `$5` kill-switch backstop**; **10-user cap** bounds the population. [`docs/09`](docs/09-conventions.md#13-cost--budget-guard) · [`PRD §8`](PRD.md#8-cost-model) |
+| **Cost**       | **Free-first** (stay in free tiers; $0 fixed, ≤$5/mo variable); Haiku + prompt cache + small candidate sets (K=40 default, ≤60); **self-enforcing per-user caps** (monthly 75 + daily 15, atomic — `75 × 10 users × $0.006 = $4.50 ≤ $5`, unit-test-enforced) **+ global `$5` kill-switch backstop**; **10-user cap** bounds the population. Catalog-embedding spend is a separate one-time bucket. [`docs/09`](docs/09-conventions.md#13-cost--budget-guard) · [`PRD §8`](PRD.md#8-cost-model) |
 | **Observability** | **Spend-vs-$5-budget** first; usage/latency/error/adapter-health **aggregate** metrics + **Sentry** errors + **daily owner email digest** — never PII/content; client error ring-buffer; adapter health pings. [`docs/06`](docs/06-security-privacy.md#no-pii) |
 | **Localization** | Availability/where-to-watch use the user's **auto-detected content region** (overridable); catalog is international multi-language. Backend deployed in **`us-east-1`**. |
 | **Distribution** | **Closed beta — 10-user hard cap enforced server-side** (`BETA_FULL` on the 11th sign-up); Chrome Web Store **unlisted** (does not limit installs → cap lives in the backend); owner alerted per new user + daily usage email. |

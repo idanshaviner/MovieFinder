@@ -56,17 +56,23 @@ export const RESOLVE_BATCH_MAX = 100;
 
 // Cost guard (backend env overrides these; here for reference/tests).
 // Closed-beta cost model (PRD §8, docs/09 §13). The caps are designed so they ALONE bound
-// monthly spend to the budget — the global kill-switch is only a backstop for estimate drift:
+// monthly spend to the budget — the global kill-switch is only a backstop for estimate drift.
+// The invariant below is enforced by a unit test (constants.budget.test.ts) so nobody can bump a
+// cap without keeping the budget guarantee true:
 //
-//   RECOMMEND_MONTHLY_CAP × BETA_MAX_USERS × EST_COST_PER_RECOMMEND_USD
-//     = 100 × 10 × $0.005 = $5.00 = MONTHLY_BUDGET_USD_DEFAULT
+//   RECOMMEND_MONTHLY_CAP × BETA_MAX_USERS × EST_COST_PER_RECOMMEND_USD ≤ MONTHLY_BUDGET_USD
+//     = 75 × 10 × $0.006 = $4.50 ≤ $5.00   (10% headroom for token variance / cache misses)
 //
 export const MONTHLY_BUDGET_USD_DEFAULT = 5;
 export const EMBED_COST_CEILING_USD_DEFAULT = 3;
 export const BETA_MAX_USERS_DEFAULT = 10;
-/** Rough uncached cost of one /recommend conversation (Haiku + query embedding). */
-export const EST_COST_PER_RECOMMEND_USD = 0.005;
+/**
+ * Conservative UNCACHED cost of one /recommend conversation: ~3K input × $1/1M + ~600 output
+ * × $5/1M (Haiku 4.5) + a negligible query embedding ≈ $0.006. Budget against the uncached
+ * figure (PRD §8) — prompt-cache hits are upside, not a reliable discount.
+ */
+export const EST_COST_PER_RECOMMEND_USD = 0.006;
 /** Per-user MONTHLY cap on /recommend — the budget-share control (binds for sustained use). */
-export const RECOMMEND_MONTHLY_CAP = 100;
+export const RECOMMEND_MONTHLY_CAP = 75;
 /** Per-user DAILY cap on /recommend — burst protection within a day. */
 export const RECOMMEND_DAILY_CAP = 15;

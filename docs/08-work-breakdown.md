@@ -122,7 +122,7 @@ Owner decision: ship the core loop first, fast-follow the rest. **In Beta 1:**
 | E4-6a | `POST /catalog/platform-link` fn + adapter reporting of `tmdbId↔siteVideoId` | `functions/catalog-platform-link/*`, `adapters/netflix/*` | E1-6, E2-2 | 🟡 | Contract [`03 §3b`](03-api-contracts.md#3b-post-catalogplatform-link-organic-exact-link-learning--fr-3); catalog-only write; best-effort; AC-3.6e |
 | E4-7 | Wire chat → SW → `/recommend`; error/retry states | `ui/Chat`, `background`, `lib/apiClient.ts` | E4-4,E4-5 | 🟡 | Retryable errors show "Try again"; timeouts handled |
 | E4-8 | Multi-turn refinement (threadId, context) | `functions/recommend`, `ui/Chat` | E4-4 | 🟡 | AC-3.5 passes |
-| E4-9 | Per-user rate limiting + budget gate on `/recommend` | `_shared/rateLimit.ts`, `_shared/budget.ts` usage | E0-10 | 🟢 | Calls `enforceUserBudgetCaps` (monthly 100 **then** daily 15, atomic) → `RATE_LIMITED`; `assertBudgetAvailable` → `AT_CAPACITY` over the $5 budget; `recordCost` after the paid call (atomic accrual). Caps × 10 users = $5 ([`09 §13`](09-conventions.md#13-cost--budget-guard)); friendly copy |
+| E4-9 | Per-user rate limiting + budget gate on `/recommend` | `_shared/rateLimit.ts`, `_shared/budget.ts` usage | E0-10 | 🟢 | Calls `enforceUserBudgetCaps` (monthly 75 **then** daily 15, atomic) → `RATE_LIMITED`; `assertBudgetAvailable` → `AT_CAPACITY` over the $5 budget; `recordCost` after the paid call (atomic accrual). Caps × 10 users ≤ $5 ([`09 §13`](09-conventions.md#13-cost--budget-guard)); friendly copy |
 
 ---
 

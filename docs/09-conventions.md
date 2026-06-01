@@ -131,11 +131,13 @@ defended in depth so a single user can't drain the budget:
 - **Per-user caps make the budget self-enforcing.** Two windows on the `rate_limits` table,
   both incremented **atomically** in Postgres (`increment_rate_limit`, migration 0005 — a
   read-then-write in JS would let a parallel burst bypass the cap):
-  - `/recommend` **monthly cap = `RECOMMEND_MONTHLY_CAP` (100)** — the budget-share control;
+  - `/recommend` **monthly cap = `RECOMMEND_MONTHLY_CAP` (75)** — the budget-share control;
   - `/recommend` **daily cap = `RECOMMEND_DAILY_CAP` (15)** — burst protection within a day.
-  - The monthly cap is sized so the **caps alone bound spend to the budget**:
-    `RECOMMEND_MONTHLY_CAP × BETA_MAX_USERS × EST_COST_PER_RECOMMEND_USD = 100 × 10 × $0.005 = $5`.
+  - The monthly cap is sized so the **caps alone bound spend to the budget** (with ~10% headroom),
+    enforced by a unit test (`constants.budget.test.ts`):
+    `RECOMMEND_MONTHLY_CAP × BETA_MAX_USERS × EST_COST_PER_RECOMMEND_USD = 75 × 10 × $0.006 = $4.50 ≤ $5`.
     So a single heavy user can no longer drain the shared budget and starve the other nine.
+    (`EST_COST_PER_RECOMMEND_USD` is the **uncached** ~$0.006 = 3K in × $1/1M + 600 out × $5/1M.)
 - **Global monthly kill-switch (backstop):** a shared `_shared/budget.ts` reads month-to-date
   estimated spend from `cost_ledger` (LLM + embeddings) and compares to `MONTHLY_BUDGET_USD`
   (env, **default `5`**). Accrual is **atomic** (`accrue_cost`, migration 0005) so concurrent

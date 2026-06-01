@@ -9,7 +9,7 @@ import { HandledError } from './errors.ts';
  * Two windows defend the $5 budget (docs/09 §13):
  *  - a DAILY cap (burst protection within a day), and
  *  - a MONTHLY cap that, times the 10-user beta cap, equals the budget:
- *    RECOMMEND_MONTHLY_CAP × BETA_MAX_USERS × ~$0.005 = $5. The caps alone bound spend;
+ *    RECOMMEND_MONTHLY_CAP × BETA_MAX_USERS × ~$0.006 = $4.50 ≤ $5. The caps alone bound spend;
  *    the global kill-switch (budget.ts) is the backstop.
  */
 function startOfUtcDay(now = new Date()): string {

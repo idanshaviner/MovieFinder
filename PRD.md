@@ -345,20 +345,25 @@ image CDN** (never proxied through us), so our egress is a small fraction of Sup
 
 ### Variable cost (LLM) — capped at **$5/mo**
 
-- **One-time:** embed the international, multi-language TMDB catalog (~100–150K titles) →
-  **~$0.30–$0.60 once** (ingest job aborts above `EMBED_COST_CEILING_USD`, default $3).
-- **Per conversation:** ~3K input + ~600 output tokens on Haiku 4.5 ≈ **~$0.005** uncached.
+- **One-time (separate bucket):** embed the international, multi-language TMDB catalog
+  (~100–150K titles) → **~$0.30–$0.60 once** (the ingest job has its own `EMBED_COST_CEILING_USD`
+  circuit breaker, default $3, bounding any single run). ℹ️ This catalog-embedding spend is **not**
+  charged against the $5 runtime budget below — it's a one-time/occasional cost, so a catalog
+  refresh can never starve recommendations. Incremental nightly re-embeds only changed titles
+  (~$0/mo in steady state).
+- **Per conversation:** ~3K input × $1/1M + ~600 output × $5/1M on Haiku 4.5 ≈ **~$0.006** uncached.
   ⚠️ Budget against the **uncached** figure: the prompt cache has a ~5-min TTL and sporadic beta
   usage will usually miss it — treat caching as upside, not a reliable halving.
 - **Per-query embedding:** one short OpenAI `text-embedding-3-small` call ≈ **~$0.000002** (cached
   per identical query) — negligible.
 - **Vector search:** **$0/query** (pgvector on Supabase Postgres).
 
-**Spend ceiling:** `MONTHLY_BUDGET_USD` = **$5** (was $25). $5 ≈ ~1,000 uncached conversations/mo.
+**Spend ceiling:** `MONTHLY_BUDGET_USD` = **$5** (was $25). $5 ≈ ~830 uncached conversations/mo.
 Defended in depth: (1) the **10-user cap** bounds the population; (2) **per-user caps that make
-the budget self-enforcing** — a **monthly cap of 100 `/recommend`/user** (`100 × 10 users ×
-$0.005 = $5`, so the caps *alone* bound spend) plus a **15/day** burst cap, both incremented
-atomically so a parallel burst can't slip past; (3) the **global $5 kill-switch** as a backstop
+the budget self-enforcing** — a **monthly cap of 75 `/recommend`/user** (`75 × 10 users ×
+$0.006 = $4.50 ≤ $5`, so the caps *alone* bound spend, with ~10% headroom for token variance;
+a unit test enforces this invariant) plus a **15/day** burst cap, both incremented atomically
+so a parallel burst can't slip past; (3) the **global $5 kill-switch** as a backstop
 for cost-estimate drift, degrading to "at capacity" rather than running up the bill, with an
 alert at 80%. No single heavy user can drain the shared budget and starve the others.
 

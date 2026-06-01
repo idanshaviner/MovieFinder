@@ -143,7 +143,7 @@ M0 ✅ ──► E0-12 ⛔ (you) ──► M1 (catalog + /recommend) ──┬�
 | R1 | Netflix DOM/endpoint drift (scrobble + session read) | Risk | Eng | Versioned adapter + CI fixtures + health ping (M2) |
 | R2 | CRXJS beta tooling | Risk | Eng | Pinned; plain-Vite escape hatch documented; CI builds the real bundle |
 | R3 | Exact Netflix-id coverage sparse early | Risk (low) | Eng | Search-link fallback always valid; `platform_ids` learns organically |
-| R4 | Cost exposure | Risk | Eng | **10-user server-side cap** + self-enforcing per-user caps (100/mo × 10 × $0.005 = $5; +15/day burst; atomic) + $5 kill-switch backstop (verify in M3) |
+| R4 | Cost exposure | Risk | Eng | **10-user server-side cap** + self-enforcing per-user caps (75/mo × 10 × $0.006 = $4.50 ≤ $5, unit-test-enforced; +15/day burst; atomic) + $5 kill-switch backstop (verify in M3) |
 
 ---
 

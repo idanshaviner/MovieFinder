@@ -303,12 +303,13 @@ show shape taste?*"; exclusion answers "*may we recommend this show back?*". The
 ---
 
 ## 4. Cost model in practice
-- Per call: ~2–3K cached input + ~0.5–1K fresh input + ~600 output on Haiku ≈ **~$0.005**.
+- Per call: ~2–3K cached input + ~0.5–1K fresh input + ~600 output on Haiku ≈ **~$0.004** warm.
 - ⚠️ **Caching is upside, not a guarantee (resolves review m9).** Anthropic's prompt cache
   TTL is ~5 minutes. For sporadic friends/beta usage, consecutive calls are usually > 5 min
   apart, so the cached blocks expire and the "≈ halved" figure often won't be realized. Budget
-  against the **uncached ~$0.005/call**; treat cache hits as a bonus during active sessions.
-- Controls: K cap (40/60), profile cap (800 tok), per-user daily limit (60), prompt caching.
+  against the **uncached ~$0.006/call** (3K in × $1/1M + 600 out × $5/1M); cache hits are a bonus.
+- Controls: K cap (40/60), profile cap (800 tok), per-user caps (75/mo + 15/day), monthly $5
+  kill-switch, prompt caching. Caps are sized so `75 × 10 users × $0.006 ≤ $5` (docs/09 §13).
 - The function logs **token counts + cache-hit tokens only** (no content) per call for cost
   monitoring.
 
