@@ -39,7 +39,12 @@ export function getDB(): Promise<IDBPDatabase<MovieFinderDB>> {
   return dbPromise;
 }
 
-/** Test-only: reset the cached connection. */
-export function _resetDbForTests(): void {
+/** Test-only: close + drop the cached connection so a following deleteDatabase isn't blocked. */
+export async function _resetDbForTests(): Promise<void> {
+  try {
+    (await dbPromise)?.close();
+  } catch {
+    /* ignore */
+  }
   dbPromise = undefined;
 }
