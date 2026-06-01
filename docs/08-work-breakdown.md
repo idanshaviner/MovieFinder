@@ -122,7 +122,7 @@ Owner decision: ship the core loop first, fast-follow the rest. **In Beta 1:**
 | E4-6a | `POST /catalog/platform-link` fn + adapter reporting of `tmdbId↔siteVideoId` | `functions/catalog-platform-link/*`, `adapters/netflix/*` | E1-6, E2-2 | 🟡 | Contract [`03 §3b`](03-api-contracts.md#3b-post-catalogplatform-link-organic-exact-link-learning--fr-3); catalog-only write; best-effort; AC-3.6e |
 | E4-7 | Wire chat → SW → `/recommend`; error/retry states | `ui/Chat`, `background`, `lib/apiClient.ts` | E4-4,E4-5 | 🟡 | Retryable errors show "Try again"; timeouts handled |
 | E4-8 | Multi-turn refinement (threadId, context) | `functions/recommend`, `ui/Chat` | E4-4 | 🟡 | AC-3.5 passes |
-| E4-9 | Per-user rate limiting + budget gate on `/recommend` | `_shared/rateLimit.ts`, `_shared/budget.ts` usage | E0-10 | 🟢 | `RATE_LIMITED` over per-user cap; `AT_CAPACITY` over monthly budget; friendly copy |
+| E4-9 | Per-user rate limiting + budget gate on `/recommend` | `_shared/rateLimit.ts`, `_shared/budget.ts` usage | E0-10 | 🟢 | Calls `enforceUserBudgetCaps` (monthly 100 **then** daily 15, atomic) → `RATE_LIMITED`; `assertBudgetAvailable` → `AT_CAPACITY` over the $5 budget; `recordCost` after the paid call (atomic accrual). Caps × 10 users = $5 ([`09 §13`](09-conventions.md#13-cost--budget-guard)); friendly copy |
 
 ---
 
@@ -168,6 +168,10 @@ Before publishing the extension (beta):
 - [ ] Rate limits + cost circuit-breaker enabled; **`MONTHLY_BUDGET_USD=5`, `BETA_MAX_USERS=10`** set.
 - [ ] 10-user cap verified (11th sign-up → `BETA_FULL`); new-user + daily-digest emails delivering
       to `OWNER_EMAIL` (`pg_cron` schedule confirmed); `metrics_daily` rollup contains no content.
+- [ ] **Supabase Auth OTP rate limits** set conservatively (per-IP + per-email send throttle) so
+      the share link can't be used to flood OTP emails / burn the email quota ([`06 §1`](06-security-privacy.md#1-threat-model-what-we-defend-against-in-v1)).
+- [ ] Per-user caps atomic + budget self-enforcing: a parallel burst of `/recommend` cannot
+      exceed the per-user cap (integration test against local Supabase, migration 0005).
 - [ ] Privacy policy live and linked from onboarding + store listing.
 - [ ] Manual smoke on real Netflix passed ([`07 §7`](07-qa-test-plan.md#7-pre-release-manual-smoke-checklist)).
 - [ ] Key rotation runbook documented (how to rotate Anthropic/OpenAI/TMDB/Supabase keys

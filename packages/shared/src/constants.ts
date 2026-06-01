@@ -54,6 +54,19 @@ export const DEFAULT_ENABLED_SITES = ['netflix'] as const;
 export const OUTBOX_MAX_PER_REQUEST = 500;
 export const RESOLVE_BATCH_MAX = 100;
 
-// Cost guard (backend env overrides these; here for reference/tests)
-export const MONTHLY_BUDGET_USD_DEFAULT = 25;
+// Cost guard (backend env overrides these; here for reference/tests).
+// Closed-beta cost model (PRD §8, docs/09 §13). The caps are designed so they ALONE bound
+// monthly spend to the budget — the global kill-switch is only a backstop for estimate drift:
+//
+//   RECOMMEND_MONTHLY_CAP × BETA_MAX_USERS × EST_COST_PER_RECOMMEND_USD
+//     = 100 × 10 × $0.005 = $5.00 = MONTHLY_BUDGET_USD_DEFAULT
+//
+export const MONTHLY_BUDGET_USD_DEFAULT = 5;
 export const EMBED_COST_CEILING_USD_DEFAULT = 3;
+export const BETA_MAX_USERS_DEFAULT = 10;
+/** Rough uncached cost of one /recommend conversation (Haiku + query embedding). */
+export const EST_COST_PER_RECOMMEND_USD = 0.005;
+/** Per-user MONTHLY cap on /recommend — the budget-share control (binds for sustained use). */
+export const RECOMMEND_MONTHLY_CAP = 100;
+/** Per-user DAILY cap on /recommend — burst protection within a day. */
+export const RECOMMEND_DAILY_CAP = 15;

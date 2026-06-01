@@ -354,10 +354,12 @@ image CDN** (never proxied through us), so our egress is a small fraction of Sup
 - **Vector search:** **$0/query** (pgvector on Supabase Postgres).
 
 **Spend ceiling:** `MONTHLY_BUDGET_USD` = **$5** (was $25). $5 ≈ ~1,000 uncached conversations/mo.
-Defended in depth: (1) the **10-user cap** bounds the population; (2) **per-user daily caps**
-re-tuned down to **~25 `/recommend`/user/day** (burst 10/min) — fair-share of $5 across ≤ 10 users
-is ~100 convos/user/mo; (3) the **global $5 kill-switch** degrades to "at capacity" rather than
-running up the bill, with an alert at 80%.
+Defended in depth: (1) the **10-user cap** bounds the population; (2) **per-user caps that make
+the budget self-enforcing** — a **monthly cap of 100 `/recommend`/user** (`100 × 10 users ×
+$0.005 = $5`, so the caps *alone* bound spend) plus a **15/day** burst cap, both incremented
+atomically so a parallel burst can't slip past; (3) the **global $5 kill-switch** as a backstop
+for cost-estimate drift, degrading to "at capacity" rather than running up the bill, with an
+alert at 80%. No single heavy user can drain the shared budget and starve the others.
 
 **All-in realistic monthly cost: ≈ $0 fixed + ≤ $5 variable.**
 

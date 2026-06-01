@@ -128,11 +128,19 @@ v1 is a **closed beta capped at 10 users** (enforced server-side at sign-up); sp
 defended in depth so a single user can't drain the budget:
 - **User cap:** sign-up Edge Function refuses the 11th profile (`BETA_FULL`) — the first line of
   spend defense.
-- **Per-user caps** (the `rate_limits` table): `/recommend` **25/day**, burst 10/min (re-tuned
-  down from 60 so fair-share of the $5 budget across ≤10 users holds — see [`PRD §8`](../PRD.md#8-cost-model)).
-- **Global monthly kill-switch:** a shared `_shared/budget.ts` reads month-to-date estimated
-  spend from `cost_ledger` (LLM + embeddings) and compares to `MONTHLY_BUDGET_USD` (env,
-  **default `5`**).
+- **Per-user caps make the budget self-enforcing.** Two windows on the `rate_limits` table,
+  both incremented **atomically** in Postgres (`increment_rate_limit`, migration 0005 — a
+  read-then-write in JS would let a parallel burst bypass the cap):
+  - `/recommend` **monthly cap = `RECOMMEND_MONTHLY_CAP` (100)** — the budget-share control;
+  - `/recommend` **daily cap = `RECOMMEND_DAILY_CAP` (15)** — burst protection within a day.
+  - The monthly cap is sized so the **caps alone bound spend to the budget**:
+    `RECOMMEND_MONTHLY_CAP × BETA_MAX_USERS × EST_COST_PER_RECOMMEND_USD = 100 × 10 × $0.005 = $5`.
+    So a single heavy user can no longer drain the shared budget and starve the other nine.
+- **Global monthly kill-switch (backstop):** a shared `_shared/budget.ts` reads month-to-date
+  estimated spend from `cost_ledger` (LLM + embeddings) and compares to `MONTHLY_BUDGET_USD`
+  (env, **default `5`**). Accrual is **atomic** (`accrue_cost`, migration 0005) so concurrent
+  calls can't lose updates and under-count spend. This now only catches estimate drift, since
+  the per-user caps already guarantee the budget.
   - At **≥ 80%** → log a warning + emit an alert (Sentry) for the operator.
   - At **≥ 100%** → `/recommend` (and other paid paths) **degrade gracefully**: return a
     friendly `error.code = "AT_CAPACITY"` (retryable later, **not** a 500) so the UI shows

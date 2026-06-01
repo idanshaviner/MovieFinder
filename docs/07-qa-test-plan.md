@@ -50,7 +50,11 @@ and manual eval run on release candidates.
 - **/catalog/resolve**: exact match high confidence; ambiguous → lower; miss → 404; lazy
   insert path adds a row + embedding.
 - **DELETE /account/data**: removes rows from all six user tables; idempotent when empty.
-- **Rate limit**: N+1th call in the window → 429 retryable.
+- **Rate limit (atomic, budget-bounding)**: the N+1th call in a window → 429 retryable; the
+  **monthly** cap (100) trips independently of the **daily** cap (15); a **parallel burst** of
+  calls cannot exceed the cap (the atomic `increment_rate_limit` from migration 0005 — proves the
+  old read-then-write race is closed). **Accrual**: concurrent `accrue_cost` calls sum correctly
+  (no lost updates), so month-to-date spend isn't under-counted.
 
 LLM/OpenAI/TMDB upstreams are **mocked** in integration (deterministic, no spend); a separate
 opt-in suite hits real upstreams behind an env flag for pre-release verification.
