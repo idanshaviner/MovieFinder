@@ -35,8 +35,8 @@ One row per `watch` (per episode for TV), newest first.
 | `media_type`     | `mediaType`                    | `movie` / `tv`           |
 | `season`         | `season` (blank for movies)    | `1`                      |
 | `episode`        | `episode` (blank for movies)   | `3`                      |
-| `completion_pct` | `progressPct × 100`, 1 dp      | `97.0`                   |
-| `source`         | `source`                       | `scrobble` / `netflix_csv` / `manual` |
+| `completion_pct` | `progressPct × 100`, 1 dp; **blank if `completionKnown=false`** (FR-9) | `97.0` |
+| `source`         | `source`                       | `scrobble` / `netflix_session` / `netflix_csv` / `manual` |
 
 ---
 

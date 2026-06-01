@@ -51,8 +51,12 @@ Model id: `claude-haiku-4-5-20251001`. Embedding model: `text-embedding-3-small`
 ## 5. Config & env
 - No magic strings/URLs in code. Backend reads `Deno.env`; extension reads a typed `config.ts`
   populated at build time from env (`VITE_*`). Secrets are backend-only.
-- One source for shared constants (`@moviefinder/shared/constants.ts`): default threshold
-  (0.90), default region, K (40), rate limits, model ids.
+- One source for shared constants (`@moviefinder/shared/constants.ts`): `COMPLETION_THRESHOLD_DEFAULT`
+  (0.90), `K_DEFAULT` (40) / `K_CAP` (60), `OFF_PLATFORM_MARGIN` (δ=0.05), `FAMILY_MAX_MATURITY`
+  (2), rate-limit values, model ids (`claude-haiku-4-5-20251001`, `text-embedding-3-small`),
+  `APP_NAME` ("MovieFinder").
+- Backend-only env: API keys, `MONTHLY_BUDGET_USD` (default 5), `EMBED_COST_CEILING_USD` (3),
+  `BETA_MAX_USERS` (default 10), `RESEND_API_KEY`, `OWNER_EMAIL`, Sentry DSN, CORS allowlist.
 
 ## 6. Git & PR workflow
 - Branch per ticket: `e2/netflix-scrobbler`. Small PRs (< ~400 lines diff where possible).
@@ -76,6 +80,12 @@ a DoD, and its dependencies are merged. Unready tickets go back to the lead, not
   focus rings, color-contrast AA, respects `prefers-reduced-motion`.
 - Loading states are skeletons, not spinners-with-no-context; errors are actionable.
 
+## 9a. Internationalization (v1)
+- **UI chrome is English-only in v1** — no i18n framework yet. But **do not hardcode** user-
+  facing strings scattered across components: keep them in one `ui/strings.ts` module so adding
+  locales later is a drop-in. The **chatbot** is inherently multilingual (the LLM replies in the
+  user's language); never force the model to English.
+
 ## 10. Performance budgets
 - Injected bundle (content script + UI) gzipped target < 150KB; lazy-load the chat panel.
 - UI mount must not block the main thread > 50ms; use `requestIdleCallback`.
@@ -89,9 +99,13 @@ cross-user data leak (review m5):
 - **Caller-JWT client** (built from the request's `Authorization` header) — used for **all
   user tables** (`watches`, `taste_signals`, `excluded_titles`, `chat_threads`, `rate_limits`,
   `profiles`). RLS applies, so it can only see the caller's rows.
-- **Service-role client** — **bypasses RLS**. Used for **catalog tables only**
-  (`catalog_titles`, `catalog_embeddings`) and the catalog-ingest job. ⚠️ It must **never**
-  read or write a user table.
+- **Service-role client** — **bypasses RLS**. Used for **catalog tables**
+  (`catalog_titles`, `catalog_embeddings`) + the catalog-ingest job, plus the **aggregate-only**
+  operational tables `cost_ledger` and `metrics_daily` (counts/spend, **no titles/queries/content**).
+  ⚠️ It must **never** read or write a per-user content table (`watches`, `taste_signals`,
+  `excluded_titles`, `chat_threads`, `profiles`). The daily-digest rollup ([`08 E0-16`](08-work-breakdown.md))
+  reads user tables only inside a `SECURITY DEFINER` SQL function that emits counts into
+  `metrics_daily` — the service-role JS client never touches them directly.
 - Enforcement: the two clients are constructed by separate helpers
   (`_shared/userClient.ts` vs `_shared/serviceClient.ts`); `serviceClient` is lint-restricted
   (an ESLint `no-restricted-imports`/grep CI check) so it can only be imported by catalog/ingest
@@ -99,6 +113,43 @@ cross-user data leak (review m5):
 
 ## 12. Module-level invariants (quick reference for reviewers)
 - `watches.id` is **always** `watchId()` (deterministic uuidv5); never `crypto.randomUUID()`.
-- The server **never** sets `Recommendation.playDeepLink`; only the client adapter does.
-- Every Edge Function: validate (zod) → auth → rate-limit → work, in that order.
+- Availability is **server-authoritative**: the server sets `onCurrentPlatform`, `whereToWatch`,
+  and `currentPlatformUrl` (exact title-page when `platform_ids` known, else search link). The
+  server **never** sets `playDeepLink` (exact play URL) — only the client adapter does, and only
+  for the currently-open title. Never trust the model for availability or links.
+- Every Edge Function: **auth → validate (zod) → rate-limit → budget check → work**, in order
+  (matches [`01 §2`](01-architecture.md#2-trust-boundary) and [`03 §1`](03-api-contracts.md#1-post-recommend-core)).
 - Nothing but auth touches the network before `settings.consentedAt` is set.
+- The service-role client touches **catalog + `cost_ledger` + `metrics_daily` only** (all
+  aggregate/no-content), never per-user content tables (§11).
+
+## 13. Cost & budget guard {#13-cost--budget-guard}
+v1 is a **closed beta capped at 10 users** (enforced server-side at sign-up); spend is still
+defended in depth so a single user can't drain the budget:
+- **User cap:** a race-free `auth.users` trigger refuses the 11th confirmed sign-up (`BETA_FULL`,
+  migration 0006) — the first line of spend defense.
+- **Per-user caps make the budget self-enforcing.** Two windows on the `rate_limits` table,
+  both incremented **atomically** in Postgres (`increment_rate_limit`, migration 0005 — a
+  read-then-write in JS would let a parallel burst bypass the cap):
+  - `/recommend` **monthly cap = `RECOMMEND_MONTHLY_CAP` (75)** — the budget-share control;
+  - `/recommend` **daily cap = `RECOMMEND_DAILY_CAP` (15)** — burst protection within a day.
+  - The monthly cap is sized so the **caps alone bound spend to the budget** (with ~10% headroom),
+    enforced by a unit test (`constants.budget.test.ts`):
+    `RECOMMEND_MONTHLY_CAP × BETA_MAX_USERS × EST_COST_PER_RECOMMEND_USD = 75 × 10 × $0.006 = $4.50 ≤ $5`.
+    So a single heavy user can no longer drain the shared budget and starve the other nine.
+    (`EST_COST_PER_RECOMMEND_USD` is the **uncached** ~$0.006 = 3K in × $1/1M + 600 out × $5/1M.)
+- **Global monthly kill-switch (backstop):** a shared `_shared/budget.ts` reads month-to-date
+  estimated spend from `cost_ledger` (LLM + embeddings) and compares to `MONTHLY_BUDGET_USD`
+  (env, **default `5`**). Accrual is **atomic** (`accrue_cost`, migration 0005) so concurrent
+  calls can't lose updates and under-count spend. This now only catches estimate drift, since
+  the per-user caps already guarantee the budget.
+  - At **≥ 80%** → log a warning + emit an alert (Sentry) for the operator.
+  - At **≥ 100%** → `/recommend` (and other paid paths) **degrade gracefully**: return a
+    friendly `error.code = "AT_CAPACITY"` (retryable later, **not** a 500) so the UI shows
+    "MovieFinder is at capacity for this month — try again soon," never an open bill.
+  - Free paths (sync, resolve from local catalog, profile) keep working.
+- **Accounting:** after each paid call, atomically add the estimated cost (from token counts ×
+  model price) to the current month's `cost_ledger` row. Estimates may lag real billing slightly;
+  the ceiling is set with headroom. The budget check is **fail-safe**: if `cost_ledger` is
+  unreadable, default to *allow* (don't take the product down over a metering glitch) but alert.
+- `AT_CAPACITY` is added to the error-code table ([`03 §0`](03-api-contracts.md#error-codes-closed-set)).

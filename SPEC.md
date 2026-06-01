@@ -21,6 +21,7 @@
 | Building the backend     | §4 (data models), §5 (API contracts), §7 (rec engine)                  |
 | QA / test                | §9 (test plan & acceptance criteria)                                   |
 | A lead assigning work    | §10 (work breakdown), §11 (Definition of Done)                         |
+| Tracking delivery        | [`DELIVERY.md`](DELIVERY.md) — milestone matrix, gates, live status     |
 
 **Conventions in this doc**
 - 🔒 = a locked decision; do not change without owner sign-off.
@@ -40,6 +41,8 @@ The detailed sub-specs live in [`docs/`](docs/):
 - [`docs/09-conventions.md`](docs/09-conventions.md) — coding standards, errors, logging
 - [`docs/10-history-import.md`](docs/10-history-import.md) — cold-start: Netflix CSV import (FR-7)
 - [`docs/11-data-export.md`](docs/11-data-export.md) — JSON + CSV export, `GET /profile` (FR-6/FR-8)
+- [`docs/12-netflix-session-import.md`](docs/12-netflix-session-import.md) — "Connect your Netflix": in-session history read (FR-9)
+- [`docs/privacy-policy.md`](docs/privacy-policy.md) · [`docs/store-listing.md`](docs/store-listing.md) — launch collateral (DRAFT)
 
 ---
 
@@ -164,10 +167,14 @@ moviefinder/
 │     │  ├─ functions/          ← Edge Functions (one folder each)
 │     │  │  ├─ recommend/
 │     │  │  ├─ sync/
-│     │  │  ├─ catalog-resolve/
-│     │  │  ├─ account-delete/  ← DELETE /account/data
-│     │  │  ├─ deno.json        ← import map: "@moviefinder/shared" → ../../shared/src
-│     │  │  └─ _shared/         ← cors, auth, anthropic, openai, tmdb clients
+│     │  │  ├─ catalog-resolve/        ← GET /catalog/resolve (live capture)
+│     │  │  ├─ catalog-resolve-batch/  ← POST /catalog/resolve-batch (bulk import, FR-7)
+│     │  │  ├─ catalog-platform-link/  ← POST /catalog/platform-link (exact-link learning, FR-3)
+│     │  │  ├─ profile/                ← GET /profile (FR-8 debug/export)
+│     │  │  ├─ account-delete/         ← DELETE /account/data
+│     │  │  ├─ deno.json               ← import map: "@moviefinder/shared" → ../../../shared/src/index.ts
+│     │  │  └─ _shared/                ← cors, auth, rateLimit, budget (kill-switch), region,
+│     │  │                                providers, anthropic, openai, tmdb, resolve, profile, metrics
 │     │  └─ seed.sql
 │     └─ jobs/
 │        └─ catalog-ingest/     ← TMDB → embeddings → pgvector (Deno script)
@@ -181,8 +188,11 @@ a copy-paste bug. ⚠️ Never redefine an API type locally — import it from `
 
 **How Deno (Edge Functions) consumes `shared`:** Deno does not resolve pnpm `node_modules`.
 The functions root carries a `deno.json` whose `imports` map points `@moviefinder/shared` at
-`../../shared/src/*` (the raw `.ts`). The extension (Vite/pnpm) consumes the same package via
-the workspace. One source, two resolution mechanisms — both compile-checked in CI (E0-2/E0-7).
+`../../../shared/src/index.ts` — the **raw source**, not a build. shared's internal re-exports use
+explicit `.ts` extensions and shared is `noEmit` (no `dist`), so **both** runtimes read the same
+source: Deno natively (it requires explicit extensions), and the extension via Vite/esbuild (which
+resolves `.ts` too). npm deps (`uuid`, `zod`, `@supabase/supabase-js`) are mapped with `npm:`
+specifiers in `deno.json`. One source, two runtimes — both compile-checked in CI (`tsc` + `deno check`).
 
 ---
 
@@ -236,7 +246,9 @@ extension origin. Standard error envelope:
 | ----------------------- | ------------------------------------------------------------------ |
 | `POST /recommend`        | Core. Body = query + content-type scope. Returns grounded, explained recs. |
 | `POST /sync`             | Push local outbox (watches, taste_signals, excludes); pull server delta.   |
-| `GET  /catalog/resolve`  | Resolve a scraped title string → canonical TMDB id (fuzzy match).          |
+| `GET  /catalog/resolve`  | Resolve a scraped title string → canonical TMDB id (fuzzy match). Live-capture path.       |
+| `POST /catalog/resolve-batch` | Resolve up to 100 titles in one call — bulk history import (FR-7), higher budget.     |
+| `POST /catalog/platform-link` | Best-effort: report a TMDB↔native platform-id pair so exact on-platform links improve (FR-3). |
 | `GET  /profile`          | Read-only: assembled taste profile (items + tiers/weights) + title-enriched history → powers CSV export (FR-8). |
 | `DELETE /account/data`   | Hard-delete all of the user's server rows (watches, taste, excludes, threads, rate-limit, profile). |
 
@@ -283,22 +295,34 @@ query + profile ──► embed query (OpenAI) ──► pgvector top-K candidat
                                                    │
         validate every returned id ∈ candidate set  ◄── 🔒 hard grounding gate
                                                    │
-        server enrich (poster, providers/where-to-watch) ──► RecommendResponse
+        availability-aware two-tier ranking (on-platform first; off only if much better)
                                                    │
-        client adapter fills playDeepLink for the CURRENT title only (post-response)
+        server enrich (poster, providers, onCurrentPlatform, currentPlatformUrl) ──► RecommendResponse
+                                                   │
+        client adapter UPGRADES playDeepLink to exact PLAY link for the CURRENT title (post-response)
 ```
 
 **Non-negotiables**
 - 🔒 **Strict grounding:** the model may only return titles whose TMDB id was in the
   retrieved candidate set. Any hallucinated id is dropped server-side before responding.
 - 🔒 **Prompt caching:** static system prompt + the user's taste profile are sent as
-  cached blocks; only the query + candidate list are fresh per call. Target ≈ $0.005/convo
+  cached blocks; only the query + candidate list are fresh per call. ≈ $0.004/convo
   **when the cache is warm** — for sporadic beta usage the 5-min cache TTL often lapses, so
-  budget against the uncached ≈$0.005 figure and treat caching as upside (see [`docs/05 §4`](docs/05-recommendation-engine.md#4-cost-model-in-practice)).
-- **`playDeepLink` is client-side only.** The server cannot map a TMDB id → a Netflix watch
-  URL; only the page adapter can, and only for the title currently open. The server never
-  returns a deep link; the client fills one in post-response for the current title.
-- Boost titles available on the user's **subscriptions**; always attach a "why".
+  budget against the **uncached ≈$0.006** figure and treat caching as upside (see [`docs/05 §4`](docs/05-recommendation-engine.md#4-cost-model-in-practice)).
+- 🔒 **Availability-aware ranking (FR-4).** Retrieve platform-agnostically; **prioritize
+  titles on the user's current platform**. Include an off-platform title only when it beats the
+  best on-platform candidate by a margin (the "much better" rule), and then the reply **must
+  note on-platform alternatives exist**. Acknowledge user-named seed titles regardless of
+  availability. Availability fields are **server-authoritative** (never trust the model for them).
+- **Linking, two forms (supersedes review B1):**
+  - **On the current platform →** server attaches `currentPlatformUrl` — an **exact Netflix
+    title-page link when the platform id is known** (learned organically from capture,
+    `catalog_titles.platform_ids`), else a **Netflix search link** (always valid). The client
+    adapter may *upgrade* `playDeepLink` to an exact `/watch/<id>` PLAY link **only** for the
+    title currently open.
+  - **Off the current platform →** `whereToWatch` provider **names as text only**, no link, no
+    play action.
+- Always attach a "why".
 
 ---
 
@@ -310,9 +334,13 @@ query + profile ──► embed query (OpenAI) ──► pgvector top-K candidat
 | **Security**   | No secrets in bundle; RLS per user; least-privilege host perms (`netflix.com` only in v1); CORS locked. [`docs/06`](docs/06-security-privacy.md) |
 | **Resilience** | Versioned adapters; every external call wrapped with timeout + retry + graceful degrade. [`docs/09`](docs/09-conventions.md) |
 | **Performance**| Injected UI never blocks the player (idle-mount, `requestIdleCallback`); LLM calls async with skeleton states; embeddings cached. |
-| **Cost**       | Haiku + prompt cache + small candidate sets (K=40 default, ≤60); per-user daily rate limit on `/recommend`. |
-| **Observability** | Structured logs (no PII) in functions; client error ring-buffer; adapter health pings. [`docs/09`](docs/09-conventions.md) |
-| **Accessibility** | Chat panel keyboard-navigable, ARIA-labelled, respects `prefers-reduced-motion`. |
+| **Cost**       | **Free-first** (stay in free tiers; $0 fixed, ≤$5/mo variable); Haiku + prompt cache + small candidate sets (K=40 default, ≤60); **self-enforcing per-user caps** (monthly 75 + daily 15, atomic — `75 × 10 users × $0.006 = $4.50 ≤ $5`, unit-test-enforced) **+ global `$5` kill-switch backstop**; **10-user cap** bounds the population. Catalog-embedding spend is a separate one-time bucket. [`docs/09`](docs/09-conventions.md#13-cost--budget-guard) · [`PRD §8`](PRD.md#8-cost-model) |
+| **Observability** | **Spend-vs-$5-budget** first; usage/latency/error/adapter-health **aggregate** metrics + **Sentry** errors + **daily owner email digest** — never PII/content; client error ring-buffer; adapter health pings. [`docs/06`](docs/06-security-privacy.md#no-pii) |
+| **Localization** | Availability/where-to-watch use the user's **auto-detected content region** (overridable); catalog is international multi-language. Backend deployed in **`us-east-1`**. |
+| **Distribution** | **Closed beta — 10-user hard cap enforced server-side** (`BETA_FULL` on the 11th sign-up); Chrome Web Store **unlisted** (does not limit installs → cap lives in the backend); owner alerted per new user + daily usage email. |
+| **QA / testing** | Release-gating five-level pyramid (unit/integration/adapter/E2E/manual eval); CI lint→typecheck→unit→integration→build green to merge; 0-tolerance invariants + release gate (all ACs, 0 S1, 0 known S2, security sign-off). [`docs/07`](docs/07-qa-test-plan.md) |
+| **Portability** | MV3 Chromium-first; Firefox + **Safari** out of v1 but de-risked (`webextension-polyfill`, no Chrome-only APIs). Safari additionally needs a native wrapper + App Store + $99/yr Apple fee. |
+| **Accessibility** | Right-dock chat panel keyboard-navigable, focus-trapped, ARIA-labelled, respects `prefers-reduced-motion`; theme-aware (light/dark). |
 
 ---
 
@@ -321,7 +349,7 @@ query + profile ──► embed query (OpenAI) ──► pgvector top-K candidat
 Test pyramid: **unit (Vitest/Deno) → integration (functions against local Supabase) →
 E2E (Playwright loading the unpacked extension on a Netflix fixture page)**. The Netflix
 adapter is covered by **recorded-DOM fixture tests** so we don't depend on a live login in
-CI. Every functional requirement (FR-1…FR-6) maps to numbered acceptance criteria with
+CI. Every functional requirement (FR-1…FR-9) maps to numbered acceptance criteria with
 Given/When/Then in the QA doc; a feature is not "done" until its ACs pass.
 
 ---
@@ -341,6 +369,11 @@ touches, dependencies, a Definition of Done, and a difficulty tag (🟢 junior-f
 | E4   | In-page chat UI + `/recommend` wired     | Phase 1   | End-to-end: chat → explained recs          |
 | E5   | Settings, onboarding, export/delete, **CSV import (FR-7)** | Phase 1 | Privacy ACs pass; CSV import ACs pass; ready for beta |
 | E6   | "Watch next" nudge & cost tuning        | Phase 2   | Post-MVP                                    |
+
+> 🎯 **First release = "Core loop" (Beta 1).** Per owner decision, the first build to friends is
+> the core loop (chat recs + cold-start Connect/CSV + live capture + consent/delete/export),
+> deferring the "watch next" nudge, CSV debug export (FR-8), and profile-editing polish to
+> fast-follow. Exact in/out list: [`docs/08 — Beta 1 scope cut`](docs/08-work-breakdown.md#beta-1-scope).
 
 **Critical path (corrected):** `E0 → E1 → (E3-1 auth + E5-2 consent guard) → E4`. The
 demoable recommender needs three things the naïve "E0→E1→E4" order hid: **authenticated**
@@ -383,6 +416,8 @@ The full release checklist (store listing, privacy policy, key rotation, smoke t
 | MV3 service-worker eviction loses in-flight state | Med        | Low    | All state in IndexedDB; outbox makes sync resumable               |
 | In-extension email-OTP auth flow harder than hoped | Med       | Med    | Chose OTP code entry (no redirect) over magic-link; fully in-extension; fallback documented in [`docs/04`](docs/04-extension.md#auth) |
 | CRXJS MV3 tooling immaturity (SW HMR / manifest)  | Med        | Low    | Pin version; keep a plain-Vite build escape hatch; CI builds the real bundle |
+| Exact Netflix-id coverage sparse early (FR-3 links) | High      | Low    | Search-link fallback is always valid; `platform_ids` map fills organically from capture via `/catalog/platform-link` |
+| Provider availability data (TMDB) stale/regional   | Med        | Med    | Nightly provider refresh; region-scoped; availability is a hint not a guarantee — UI says "where to watch", not "guaranteed streaming" |
 
 ---
 
@@ -392,9 +427,11 @@ Firefox, bring-your-own-key, non-Netflix **live** adapters, multi-device real-ti
 social/sharing, and "whole-show finished" detection beyond per-episode aggregation. These
 are tracked in PRD §10 and will be re-specced when prioritized.
 
-**Cold-start import (FR-7):** the one-time **Netflix CSV import IS in v1** — see
-[`docs/10-history-import.md`](docs/10-history-import.md). The *other* import lanes
-(Letterboxd/IMDb tracker CSV, browser-history `chrome.history` scan) are **deferred** but
-reuse the same parse → resolve → `watchId()` → outbox pipeline. Google/YouTube Takeout is
-**ruled out** (wrong data — YouTube + search, not streaming watches).
+**Cold-start (FR-7 + FR-9):** the **Netflix CSV import** and the **in-session "Connect your
+Netflix" history read** are both **in v1** — see [`docs/10`](docs/10-history-import.md) and
+[`docs/12`](docs/12-netflix-session-import.md). The *other* import lanes (Letterboxd/IMDb
+tracker CSV, browser-history `chrome.history` scan, in-session reads for non-Netflix platforms)
+are **deferred** but reuse the same resolve → `watchId()` → outbox pipeline. Google/YouTube
+Takeout is **ruled out** (wrong data). Switching/enumerating Netflix profiles for the user is
+also out of scope.
 ```

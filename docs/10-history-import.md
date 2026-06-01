@@ -57,7 +57,7 @@ future nicety.
 
 ```
 upload CSV ─► stream-parse rows ─► drop supplemental rows ─► parse Title
-   ─► resolve → TMDB id (GET /catalog/resolve, fuzzy + confidence)
+   ─► dedupe titles ─► resolve in batches of ≤100 (POST /catalog/resolve-batch, fuzzy + confidence)
    ─► group by watchId(tmdbId, season?, episode?)
    ─► completion = max(Bookmark in group) / TMDB runtime   (clamp 0..1)
    ─► completion ≥ threshold(0.90)?  ─ yes ─► write `watch` (finished, source=netflix_csv)
@@ -70,6 +70,10 @@ upload CSV ─► stream-parse rows ─► drop supplemental rows ─► parse T
 - **Reuse `watchId()`** (`packages/shared/src/ids.ts`, the deterministic
   `uuidv5(tmdbId:season:episode)`). This makes import **idempotent** and makes an imported
   watch **converge** with a live-captured one (LWW by `updatedAt`) instead of duplicating.
+- **Resolve in bulk, not one-by-one.** Dedupe titles client-side first, then call
+  **`POST /catalog/resolve-batch`** (≤100/req, [`03 §3a`](03-api-contracts.md#3a-post-catalogresolve-batch-bulk-import--resolves-review-r4)) so a
+  large history doesn't exhaust the single-title resolve budget (review R4). Show a progress
+  bar; paginate; the import is resumable and never silently stalls.
 - **Completion needs TMDB runtime**, which the CSV lacks → resolve first, then divide by the
   title's (or episode's) runtime. No runtime ⇒ cannot compute ⇒ treat as low-confidence review.
 - **Title resolution mirrors live capture** (doc 01 §4): confidence `< 0.6` is **never
@@ -87,7 +91,8 @@ Add to `watches` (Postgres + IndexedDB + `packages/shared`):
 - `source: 'scrobble' | 'netflix_csv' | 'manual'` (default `'scrobble'`; canonical enum in
   [`02 §3`](02-data-models.md)). Future import lanes extend the enum.
 
-No new endpoints: imports write `watches` rows and flow through the existing `POST /sync`.
+Imports write `watches` rows and flow through the existing `POST /sync`. The only new
+endpoint is **`POST /catalog/resolve-batch`** (bulk title resolution, [`03 §3a`](03-api-contracts.md#3a-post-catalogresolve-batch-bulk-import--resolves-review-r4));
 `completion` maps to the existing percentage field; `finished` is derived as today.
 
 ---

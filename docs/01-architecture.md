@@ -45,8 +45,9 @@ Function. The extension is a thin client.
 Everything the extension sends is **hostile until validated**. Every Edge Function:
 1. Verifies the Supabase JWT (reject `401` if absent/invalid).
 2. Parses the body with the zod schema from `@moviefinder/shared` (reject `400` on fail).
-3. Applies a per-user rate limit (reject `429` over budget).
-4. Only then does real work, scoped to `auth.uid()`.
+3. Applies a per-user rate limit (reject `429 RATE_LIMITED` over budget).
+4. For paid paths, checks the **global monthly budget** ([`09 §13`](09-conventions.md#13-cost--budget-guard)) — reject `429 AT_CAPACITY` if over the ceiling.
+5. Only then does real work, scoped to `auth.uid()`.
 
 ---
 

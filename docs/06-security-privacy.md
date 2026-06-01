@@ -14,7 +14,8 @@
 | Auth tokens               | Stolen by the host page (Netflix or an XSS)    | Tokens in `chrome.storage.session`, never in page context |
 | User viewing history      | Leaked via logs/telemetry                      | No-PII logging rule; no content in logs          |
 | The injected UI           | Page CSS/JS interfering or scraping it         | Shadow DOM isolation; no secrets in DOM          |
-| Backend abuse             | A valid user hammering / running up cost       | Per-user rate limits; cost circuit breaker       |
+| Backend abuse             | A valid user hammering / running up LLM cost   | **Atomic** per-user caps (monthly 75 + daily 15) sized so caps × 10-user beta cap (`75×10×$0.006=$4.50`) ≤ the $5 budget; global kill-switch backstop ([`09 §13`](09-conventions.md#13-cost--budget-guard)) |
+| Sign-up / OTP flooding    | Anyone with the share link spamming `signInWithOtp` to burn the Supabase email quota (and the 11th-user cap fires only at verify) | **Supabase Auth built-in rate limits** (per-IP + per-email OTP-send throttle) — set conservatively for the beta; the **10-user `BETA_FULL` cap** ([`08 E0-13`](08-work-breakdown.md)) bounds real accounts; no custom SMTP spend |
 
 Out of scope for v1: nation-state adversaries, defeating a malicious browser, DRM/anti-bot
 evasion. We are a friends/beta product.
@@ -89,12 +90,24 @@ evasion. We are a friends/beta product.
 
 ## 6. Logging & telemetry rules {#no-pii}
 
+🔒 The PII bar is the same for logs **and** telemetry: **no content, no identity, ever.**
+
 - **No PII, no content, no ids** in server logs. Allowed: `error.code`, latency, token
   counts, a random `traceId`, the function name. Forbidden: query text, titles, email,
   `user_id`, JWT, IP-derived identity.
+- **Allowed telemetry (v1 — refines the earlier "no telemetry" stance):**
+  - **Anonymous aggregate metrics** — counters/histograms only: recommendations served, p50/p95
+    latency, error-rate by `error.code`, cache-hit ratio, daily-active count. **No per-user
+    dimension, no titles, no queries.** Emitted from the Edge Functions; stored as aggregates.
+  - **Error monitoring** (e.g. **Sentry**) on the Edge Functions for stack traces + error rates.
+    🔒 Scrub before send: **no** request bodies, query text, titles, email, `user_id`, JWT, or
+    IP. Sentry configured with `sendDefaultPii: false` and a `beforeSend` redactor; the DSN is a
+    backend secret. A client-side error reporter is **opt-in only** (off by default).
+  - This is disclosed in the privacy policy.
 - The client log ring buffer (for bug reports) stays **on the device**; it is shown to the
   user and only leaves the machine if the user manually copies it into a report.
-- No third-party analytics SDKs in v1.
+- **Forbidden:** any analytics that carries titles, queries, watch history, email, or a stable
+  per-user/device id; session-replay; ad/marketing SDKs.
 
 ---
 

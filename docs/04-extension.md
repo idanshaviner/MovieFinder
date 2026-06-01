@@ -95,25 +95,47 @@ Rules:
 
 ## 4. UI mounting (Shadow DOM + Preact)
 
+The panel is a **right-side dock that reshapes the page** (not a floating overlay): when open,
+Netflix's content shrinks to make room for a fixed right column. Two layers, both isolated:
+
 ```ts
 // content/index.ts (simplified)
+// 1) our UI host — a fixed right-edge column inside a Shadow DOM (style-isolated both ways)
 const host = document.createElement('div');
 host.id = 'moviefinder-root';
-host.style.cssText = 'all: initial; position: fixed; z-index: 2147483646;';
+host.style.cssText = 'all: initial; position: fixed; top:0; right:0; height:100vh; z-index:2147483646;';
 const shadow = host.attachShadow({ mode: 'open' });
-document.documentElement.appendChild(host);
-// inject our compiled CSS into the shadow root ONLY
 shadow.adoptedStyleSheets = [mfStyleSheet];
+document.documentElement.appendChild(host);
 render(<App adapter={adapter} />, shadow);
+
+// 2) "reshape" the page by reserving width on the RIGHT, via a single class on <html>.
+//    We never restructure Netflix's DOM — just a margin we own and can cleanly remove.
+const PANEL_W = '380px';
+document.documentElement.style.setProperty('--mf-dock', '0px');   // closed
+// open  → setProperty('--mf-dock', PANEL_W);  closed → '0px'
+// styleSheet (document-level, scoped to our property): html { margin-right: var(--mf-dock) !important; transition: margin-right .2s; }
 ```
 
 Rules:
-- 🔒 All UI lives inside the shadow root. The only thing we add to the page is the single
-  `#moviefinder-root` host. This guarantees style isolation both ways.
-- Mount lazily: wait for `document_idle` + `requestIdleCallback` so we never delay the player.
-- Launcher = a small floating button; clicking opens the chat panel. Panel is dismissible and
-  remembers open/closed per-tab in `sessionStorage` (UI-only state).
-- Respect `prefers-reduced-motion`; panel is keyboard-navigable and ARIA-labelled (FR / a11y).
+- 🔒 All UI lives inside the shadow root. The only page mutations are (a) the single
+  `#moviefinder-root` host and (b) one CSS custom property + a margin on `<html>` we fully own
+  and remove on close/disable. Never restructure Netflix's DOM.
+- **Launcher** = a small tab pinned to the right edge; clicking toggles the dock (slide-in).
+  Open/closed + width persist per-tab in `sessionStorage` (UI-only state).
+- **Theme-aware:** follow `prefers-color-scheme` (light UI in light mode, dark in dark) via the
+  shadow root's CSS variables; expose a manual override in settings. 🔒 Must be readable over
+  Netflix's dark chrome in both themes.
+- **Branding (v1 default theme):** name **"MovieFinder"** (`APP_NAME` constant, swappable in one
+  place). Use a **neutral, accessible palette** driven by CSS custom properties (one `--mf-*`
+  token set per theme) meeting WCAG AA contrast; a simple placeholder icon (replaceable later).
+  No brand assets are blocking — keep all colors/tokens in `ui/theme.ts`.
+- 🔒 **Fullscreen / active playback:** when the player is fullscreen (or `requestFullscreen` is
+  active), **auto-collapse to just the launcher** and set `--mf-dock: 0px` — never reshape or
+  overlay a fullscreen video. Restore the user's prior dock state on exit.
+- Mount lazily: `document_idle` + `requestIdleCallback`; the reshape must not jank the player.
+- Respect `prefers-reduced-motion` (no slide animation); panel is focus-trapped when open,
+  keyboard-navigable, ARIA-labelled (FR / a11y, AC-5.3).
 
 ---
 
@@ -131,9 +153,20 @@ export interface ScrobbleEvent {
   siteVideoId?: string;      // platform's own id, if discoverable (for deep links)
 }
 
+// One raw item from the in-session viewing-activity read (FR-9, doc 12).
+export interface RawViewedItem {
+  rawTitle: string;
+  mediaType?: MediaType;
+  season?: number;
+  episode?: number;
+  watchedAt: number;         // epoch ms
+  completionPct?: number;    // 0..1 IF the endpoint carried bookmark+duration; else undefined
+  siteVideoId?: string;
+}
+
 export interface SiteAdapter {
   readonly siteId: string;
-  readonly version: string;          // bump when DOM assumptions change
+  readonly version: string;          // bump when DOM/endpoint assumptions change
 
   /** True if this adapter recognises the current page as a watchable player. */
   matches(): boolean;
@@ -147,6 +180,11 @@ export interface SiteAdapter {
 
   /** Build a deep link to play a TMDB title on this site, if resolvable. May return null. */
   buildPlayDeepLink(tmdbId: number): string | null;
+
+  /** Optional (FR-9): read the user's OWN viewing activity from the logged-in session,
+   *  client-side, paged. Undefined if the site has no such capability. MUST fail closed
+   *  (yield nothing + health ping) on shape changes; NEVER throw into the page. doc 12. */
+  readViewingActivity?(): AsyncIterable<RawViewedItem>;
 }
 ```
 
@@ -206,17 +244,25 @@ HTML5 `<video>` element and the title from the player UI overlay.
 - For **autoplay-next** binge sessions, each episode's `siteVideoId` change re-arms capture,
   so each finished episode produces one `WATCH_FINISHED`.
 
-### 6.5 Deep links (client-side only — resolves review B1)
-🔒 Deep links are produced **entirely on the client**; the server never returns one (it has
-no TMDB→Netflix-id map). After a `/recommend` response renders, the UI asks the active
-adapter to fill `playDeepLink` for each rec:
-- `buildPlayDeepLink(tmdbId)` returns a Netflix watch URL **only** when that `tmdbId` is the
-  title currently/last resolved on this site (we know its `siteVideoId`). For every other
-  rec it returns `null` (no guessing wrong links).
-- Consequence: in practice a play link appears only when the user is *on* a title we
-  recommend back to them — which is rare. That is expected; `whereToWatch` is the primary
-  actionable signal, the deep link is a bonus. AC-3.6 is written to match this reality.
-- Cross-title deep linking (a TMDB→Netflix-id map so any rec is playable) is Phase 2.
+### 6.5 Deep links & availability links {#65-deep-links--availability-links}
+Two layers, by design (supersedes the earlier client-only B1 stance):
+
+1. **Server-provided availability links (primary).** `/recommend` returns, per rec:
+   `onCurrentPlatform`, `whereToWatch`, and — for on-platform titles — `currentPlatformUrl`
+   (exact `netflix.com/title/<id>` when the id is known, else a `netflix.com/search?q=` link).
+   The chat UI renders these directly; **no adapter work needed** for the common case. This is
+   what makes "link any on-platform rec, not just the current title" work in v1.
+2. **Client play-link upgrade (bonus).** After render, the UI asks the active adapter to
+   *upgrade* the **currently-open** title's `currentPlatformUrl` to an exact PLAY deep link:
+   - `buildPlayDeepLink(tmdbId)` returns a `netflix.com/watch/<siteVideoId>` URL **only** when
+     that `tmdbId` is the title currently/last resolved on this page (we know its
+     `siteVideoId`); otherwise `null` (no guessing).
+   - When the adapter knows a `tmdbId ↔ siteVideoId` pair, it also fires
+     `POST /catalog/platform-link` (best-effort) so the catalog learns the exact id and *every*
+     user's future links for that title become exact. This is how the hybrid "exact when known"
+     map fills organically — no external data source.
+
+Off-platform recs show `whereToWatch` provider **names as text only** — no link, no play action.
 
 ### 6.6 Fixture testing
 Record real Netflix player DOM (sanitised, logged-out where possible) into
@@ -236,8 +282,10 @@ Record real Netflix player DOM (sanitised, logged-out where possible) into
 - **Capture handler:** on `WATCH_FINISHED` → `/catalog/resolve` → confidence gate → write
   `watch` + enqueue outbox.
 - **Sync engine:** debounced (e.g. 10s after a write, or on a 5-min alarm via
-  `chrome.alarms`) → drains outbox to `/sync`, applies `serverChanges`, advances cursor.
-  Uses `chrome.alarms` (not `setInterval`) because the SW is ephemeral.
+  `chrome.alarms`) → drains outbox to `/sync`, **includes the `settings` row when it changed**
+  (so `region`/`subscriptions`/`contentFilter`/`threshold`/`consentedAt` reach the `profiles`
+  table `/recommend` reads), applies `serverChanges` + any newer server `settings`, advances
+  cursor. Uses `chrome.alarms` (not `setInterval`) because the SW is ephemeral.
 - **Recommend proxy:** forwards `RECOMMEND` with the JWT; never adds keys (backend has them).
 - **Settings/consent gate:** refuses capture, sync, and recommend while `settings.consentedAt`
   is unset. 🔒

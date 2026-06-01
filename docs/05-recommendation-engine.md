@@ -10,11 +10,19 @@
 Goal: populate `catalog_titles` + `catalog_embeddings` from TMDB so vector search has
 something to retrieve.
 
-### 1.1 What to ingest (v1 curated set)
-- TMDB **popular + top-rated** movies and TV, plus anything resolved on-demand (see §5).
-- Target ~50–100K titles (PRD cost model). Don't ingest the long tail of obscure titles in
-  v1 — it bloats cost and hurts retrieval precision.
-- Per title, store the fields in `catalog_titles` and build the **embedding source text**:
+### 1.1 What to ingest (v1 curated set — international, multi-language)
+- TMDB **popular + top-rated** movies and TV, **across major markets/languages** (not English
+  only — availability auto-detects region, so international users must get good matches). Source
+  via TMDB discover/popular per language **and** per major region, then de-dupe by `tmdb_id`.
+- Target ~100–150K titles (multi-language widens the set; cost is still tens of dollars, §1.4).
+  Still avoid the obscure long tail — it bloats cost and hurts precision; lazy on-demand resolve
+  (§5) backfills whatever real users actually watch.
+- Store the **original language** and keep `overview` in a consistent language for embeddings
+  (prefer English overview when available for a shared vector space; fall back to original).
+- Per title, store the fields in `catalog_titles` (incl. `released_episode_count`, `providers`
+  per region, `platform_ids`, the TMDB **`adult`** flag, and a best-effort **`maturity_rank`**
+  0–5 derived from TMDB certifications/content-ratings — null when unknown, treated as 0) and
+  build the **embedding source text**:
 
 ```
 "{title} ({year}) — {media_type}. Genres: {genres joined}. {overview}"
@@ -36,9 +44,10 @@ something to retrieve.
 - Provider availability (`providers` jsonb) is refreshed nightly because it changes often.
 
 ### 1.4 Cost guardrail
-Full embed of ~100K titles ≈ $0.20–0.40 once (PRD §8). The job logs token totals and
-aborts if projected cost exceeds a configurable ceiling (default $2) — a cheap circuit
-breaker against a runaway loop.
+Full embed of ~100–150K multi-language titles ≈ **$0.30–0.60 once**. The job logs token
+totals and aborts if projected cost exceeds a configurable ceiling (default $3) — a cheap
+circuit breaker against a runaway loop. (Distinct from the runtime `MONTHLY_BUDGET_USD`
+kill-switch in [`09 §13`](09-conventions.md#13-cost--budget-guard).)
 
 ---
 
@@ -52,12 +61,15 @@ For a `/recommend` call:
 
 ```sql
 select t.tmdb_id, t.title, t.media_type, t.release_year, t.genres, t.overview,
-       t.poster_path, t.providers,
+       t.poster_path, t.providers, t.platform_ids,
        1 - (e.embedding <=> $1) as similarity
 from catalog_embeddings e
 join catalog_titles t using (tmdb_id)
 where ($2::text is null or t.media_type = $2)         -- scope filter
   and t.tmdb_id <> all($3::int[])                     -- exclude watched + excluded
+  and t.adult = false                                 -- 🔒 adult ALWAYS excluded (FR-6)
+  and ($5::boolean = false                            -- $5 = familyMode (content_filter='family')
+       or coalesce(t.maturity_rank, 0) <= $6)         -- $6 = FAMILY_MAX_MATURITY (e.g. 2)
 order by e.embedding <=> $1
 limit $4;                                              -- K (default 40)
 ```
@@ -65,7 +77,8 @@ limit $4;                                              -- K (default 40)
 3. **K** default 40, cap 60 (🔒 reconciled with SPEC §8; review M5). Smaller K = cheaper
    Claude call + tighter grounding; too small = poor coverage. 40 is the v1 default; config.
 4. **De-dupe set `$3` (precise — resolves review M3).** The exclude id set is built as:
-   - **Movies:** exclude any `tmdb_id` with ≥ 1 finished `watch` (`progress_pct ≥ threshold`).
+   - **Movies:** exclude any `tmdb_id` the user has **any** `watch` for — finished *or*
+     completion-unknown (FR-9). Rationale: they've already seen it; don't re-recommend.
    - **TV shows:** exclude a show's `tmdb_id` **only if** (a) it is in `excluded_titles`
      (explicit user exclude), **or** (b) the user has finished **≥ 80% of its released
      episodes** — computed as `distinct finished (season,episode) / released_episode_count`
@@ -76,6 +89,44 @@ limit $4;                                              -- K (default 40)
    This makes AC-3.3 (0-tolerance) deterministic and testable. The `released_episode_count`
    is refreshed by the nightly catalog job.
 5. If 0 rows: return the honest "no good match" path (don't call Claude).
+
+### 2.5 Availability-aware two-tier ranking (FR-4) {#25-availability-aware-two-tier-ranking-fr-4}
+
+🔒 Retrieval is **platform-agnostic** (we never filter the catalog by platform — that's what
+lets us match the user's taste honestly). Availability shapes **ranking and presentation**, not
+what we retrieve.
+
+**Candidate sourcing (so the on-platform tier is never starved).** A single global top-K can,
+by chance, contain few or no on-platform titles even when good ones exist just outside it. So
+retrieval (§2) runs **two queries and unions them**: the global top-K (platform-agnostic), plus
+a **platform-filtered top-M** (`where providers[region] ⊇ currentSite`, M ≈ 20). The union (cap
+≈ 60, dedup) is the candidate set. This guarantees the model and the ranker actually *see*
+on-platform options to prefer. Cheap: same index, one extra ANN query.
+
+For each candidate, compute `onPlatform = providers[region]` contains a provider that the
+[`_shared/providers.ts`](#) normalization map ties to the request's `currentSite` (e.g.
+`"Netflix"` → `netflix`). Then compose the final list (target `N` ≈ 5):
+
+1. **Partition** candidates into `onPlatform` and `offPlatform`, each kept in similarity/taste
+   rank order (`rankScore` from §3.7 where applicable).
+2. **On-platform first.** Fill the result from `onPlatform` candidates.
+3. **"Much better" off-platform rule.** Include an `offPlatform` title only if **either**:
+   - the on-platform pool can't fill `N` (not enough good on-platform matches), **or**
+   - its score beats the **best on-platform candidate** by a margin `δ` (default `δ = 0.05`
+     cosine similarity; tunable). This is the crisp meaning of "unless it's much better."
+   Cap off-platform picks at **≤ 2** of `N` unless the on-platform pool is empty.
+4. **If the on-platform pool is empty**, return the best off-platform matches (with clear
+   where-to-watch) rather than nothing — never refuse just because the platform lacks a match.
+5. **Disclosure flag.** If the final list contains **any** off-platform title while on-platform
+   alternatives also existed, set an internal `hasOnPlatformAlternatives = true` so the prompt
+   instructs the model to **say so** in `assistantMessage` ("…X is the strongest match but it's
+   on Prime; if you'd rather stay on Netflix, Y and Z are close"). The structured per-rec
+   `onCurrentPlatform` badge is the authoritative UI signal; the prose note reinforces it.
+
+The model receives each candidate's `onPlatform` flag and this policy, and orders within it; the
+server then enforces the caps (drops excess off-platform) and sets the authoritative
+availability fields. ⚠️ **Never trust the model for availability or links** — those are computed
+from `catalog_titles`.
 
 ---
 
@@ -91,11 +142,13 @@ refinement). It must never *invent* titles — only choose and explain among ret
 🔒 Layout the messages so the **stable prefix is cacheable** and only the tail is fresh:
 
 ```
-system  (CACHED)  → role, hard rules, output JSON contract, grounding rules
+system  (CACHED)  → role, hard rules, output JSON contract, grounding rules,
+                    acknowledgment rule, two-tier availability rule (see below)
 system  (CACHED)  → the user's taste profile, compactly rendered
                     (changes rarely; cache breaks only when profile changes)
-user    (FRESH)   → the current query + the candidate list (id, title, year, genres, 1-line)
-                    + conversation history for this thread
+user    (FRESH)   → the current query + the candidate list
+                    (id | title (year) | genres | 1-line | onPlatform: yes/no)
+                    + hasOnPlatformAlternatives flag + conversation history for this thread
 ```
 
 - Use Anthropic **prompt caching** (`cache_control: { type: 'ephemeral' }`) on the two system
@@ -103,8 +156,16 @@ user    (FRESH)   → the current query + the candidate list (id, title, year, g
 - Render the **taste profile** as a compact, bounded summary (top liked/disliked with
   reasons, recent finishes) — cap its size (e.g. ≤ 800 tokens) so cost stays predictable.
   A long profile is summarised by a cheap periodic job, not sent raw.
-- Keep the candidate list compact: `id | title (year) | genres | one-line overview`. Do NOT
-  send full overviews for all 40 — it inflates tokens with little ranking benefit.
+- Keep the candidate list compact: `id | title (year) | genres | one-line overview | onPlatform`.
+  The `onPlatform` flag is what lets the model do the two-tier ordering; it's cheap.
+- **Two cached system rules added for this feature:**
+  - **Acknowledgment rule:** "If the user names a title they liked, acknowledge it by name in
+    your reply **even if it is not in the candidate list / not on the platform** — then make
+    your picks." (The named title may be off-platform or not retrieved; we still recognize it.)
+  - **Two-tier rule:** "Prefer titles with `onPlatform: yes`. Only choose an `onPlatform: no`
+    title when it is a clearly better match. **If `hasOnPlatformAlternatives` is true and you
+    include any off-platform pick, explicitly tell the user that on-platform options also
+    exist.**"
 
 ### 3.3 Output contract (model returns JSON)
 Instruct the model to return **only** this JSON (we parse, then validate):
@@ -122,7 +183,10 @@ Instruct the model to return **only** this JSON (we parse, then validate):
   we enforce it in code (next section). Belt and suspenders.
 - `why` must reference the user's stated taste or a finished watch ("Because you finished
   Sicario and like tense, morally-gray thrillers"). Generic whys are a quality bug.
-- Order of `picks` = recommended ranking.
+- `assistantMessage` should **acknowledge any title the user named** (even off-platform / not
+  retrieved), and — when the picks include an off-platform title and on-platform ones existed —
+  **note that on-platform alternatives are available** (driven by `hasOnPlatformAlternatives`).
+- Order of `picks` = recommended ranking (the server still enforces §2.5 caps after).
 
 ### 3.4 Grounding gate (🔒 server-side, non-negotiable)
 
@@ -133,19 +197,33 @@ const grounded = model.picks.filter(p => candidateIds.has(p.tmdbId));
 if (grounded.length === 0) return honestNoMatchResponse(model.assistantMessage);
 ```
 
-Then enrich each grounded pick from the candidate row we already have: title, year, poster,
-and **`whereToWatch`** = `catalog_titles.providers[profile.region]`, ordered so the user's
-`profile.subscriptions` come first (review M7). 🔒 The server does **not** set `playDeepLink`
-(it cannot map TMDB → a Netflix watch URL); the client adapter fills that post-response for
-the current title only (review B1, [`04 §6.5`](04-extension.md#65-deep-links-client-side-only--resolves-review-b1)).
-This guarantees **every shipped recommendation is a real TMDB title** the system retrieved.
+Then apply the **availability-aware ordering/caps** (§2.5) and enrich each grounded pick from
+the candidate row we already have:
+- `title`, `year`, `poster`.
+- `onCurrentPlatform` = the §2.5 `onPlatform` flag for the request's `currentSite`.
+- `whereToWatch` = `catalog_titles.providers[profile.region]`, ordered so the user's
+  `profile.subscriptions` come first (review M7). For **off-platform** picks this is the display
+  text ("On Prime Video, Max") — names only, **no link** (per product decision).
+- For **on-platform** picks, build `currentPlatformUrl` (the hybrid — product decision):
+  ```ts
+  const nativeId = catalogRow.platform_ids?.[currentSite];           // learned via /catalog/platform-link
+  rec.currentPlatformUrl = nativeId
+    ? buildExactTitleUrl(currentSite, nativeId)                       // e.g. netflix.com/title/70131314
+    : buildSearchUrl(currentSite, rec.title);                        // e.g. netflix.com/search?q=The%20Prestige
+  ```
+- 🔒 The server still does **not** set `playDeepLink` (it can't synthesize an exact
+  `/watch/<id>` *play* URL); the client adapter upgrades that for the **currently-open** title
+  only ([`04 §6.5`](04-extension.md#65-deep-links--availability-links)).
+
+This guarantees **every shipped recommendation is a real TMDB title** the system retrieved, with
+honest, server-authoritative availability.
 
 ⚠️ **Provider-name normalization (review m4).** TMDB provider names ("Netflix", "Amazon
 Prime Video") must match `profile.subscriptions` and the adapter `siteId` ('netflix'). Keep a
 single normalization map in `_shared/providers.ts` (TMDB name → canonical name + optional
 siteId) and run all provider strings through it before comparison/boost.
 
-### 3.5 Model & params (timeout ladder — resolves review M4)
+### 3.5 Model & params (timeout ladder — resolves review M4) {#35-model--params}
 - Model: `claude-haiku-4-5-20251001` (🔒 PRD).
 - `max_tokens` ~ 600; low temperature (e.g. 0.4) for stable, grounded output.
 - **Timeout ladder:** OpenAI embed ≤ **4s** → Claude ≤ **12s** → **server total ≤ 14s** →
@@ -188,6 +266,12 @@ For each show `S` with ≥ 1 finished episode:
 calibrated against. Top-down evaluation means a 2-of-2 limited series scores `frac=1.0` →
 **Completed**, not Sampled.
 
+🔒 **Completion-unknown watches (FR-9, [`12 §3`](12-netflix-session-import.md#3-completion-unknown-watches--data-model-decision)).**
+A movie watch with `completion_known=false` is a weaker positive than a confirmed finish →
+weight **0.5** (vs 1.0). A later confirmed finish (scrobble/CSV) converges on the same
+deterministic `watchId` and upgrades it to 1.0. For TV, only `completion_known` episodes count
+toward `epsFinished` in the tier fractions.
+
 **How the weight is used**
 - **Profile selection:** when capping the profile to ≤ 800 tokens / top-N items (§3.2), rank
   items by `weight × recency`, where `recency` is a decay on `lastFinishedAt` (suggest a 90-day
@@ -219,12 +303,13 @@ show shape taste?*"; exclusion answers "*may we recommend this show back?*". The
 ---
 
 ## 4. Cost model in practice
-- Per call: ~2–3K cached input + ~0.5–1K fresh input + ~600 output on Haiku ≈ **~$0.005**.
+- Per call: ~2–3K cached input + ~0.5–1K fresh input + ~600 output on Haiku ≈ **~$0.004** warm.
 - ⚠️ **Caching is upside, not a guarantee (resolves review m9).** Anthropic's prompt cache
   TTL is ~5 minutes. For sporadic friends/beta usage, consecutive calls are usually > 5 min
   apart, so the cached blocks expire and the "≈ halved" figure often won't be realized. Budget
-  against the **uncached ~$0.005/call**; treat cache hits as a bonus during active sessions.
-- Controls: K cap (40/60), profile cap (800 tok), per-user daily limit (60), prompt caching.
+  against the **uncached ~$0.006/call** (3K in × $1/1M + 600 out × $5/1M); cache hits are a bonus.
+- Controls: K cap (40/60), profile cap (800 tok), per-user caps (75/mo + 15/day), monthly $5
+  kill-switch, prompt caching. Caps are sized so `75 × 10 users × $0.006 ≤ $5` (docs/09 §13).
 - The function logs **token counts + cache-hit tokens only** (no content) per call for cost
   monitoring.
 

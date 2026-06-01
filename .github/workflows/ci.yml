@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable Corepack / pnpm
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Format check
+        run: pnpm exec prettier --check "packages/**/*.ts"
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      - name: Test
+        run: pnpm -r test
+
+      - name: Build
+        run: pnpm -r build
+
+  edge-functions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Typecheck Edge Functions (resolves @moviefinder/shared from source)
+        working-directory: packages/backend/supabase/functions
+        run: deno check _shared/*.ts hello/index.ts
+      - name: Test Edge Functions (pure logic)
+        working-directory: packages/backend/supabase/functions
+        run: deno test _shared/
+      - name: Typecheck ingest job
+        working-directory: packages/backend/jobs/catalog-ingest
+        run: deno check index.ts
+
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: pw
+          POSTGRES_DB: mf
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply migrations against Postgres + pgvector
+        env:
+          PGPASSWORD: pw
+        run: |
+          psql -h localhost -U postgres -d mf -v ON_ERROR_STOP=1 -c "
+            create schema if not exists auth;
+            create table auth.users (id uuid primary key default gen_random_uuid(),
+                                     email_confirmed_at timestamptz);
+            create or replace function auth.uid() returns uuid language sql stable as \$\$ select '00000000-0000-0000-0000-000000000000'::uuid \$\$;"
+          for f in packages/backend/supabase/migrations/*.sql; do
+            echo "applying $f"; psql -h localhost -U postgres -d mf -v ON_ERROR_STOP=1 -f "$f";
+          done
+
+      - name: Behavioral tests for the cost/abuse guards (0005/0006)
+        env:
+          PGPASSWORD: pw
+        run: |
+          psql -h localhost -U postgres -d mf -v ON_ERROR_STOP=1 \
+            -f packages/backend/supabase/tests/cost_guards.test.sql
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks (no secrets in repo / bundle)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"

@@ -1,0 +1,11 @@
+{
+  "tasks": {
+    "ingest": "deno run --allow-net --allow-env --allow-read --env-file=../../.env index.ts"
+  },
+  "imports": {
+    "@moviefinder/shared": "../../../shared/src/index.ts",
+    "uuid": "npm:uuid@^11.0.3",
+    "zod": "npm:zod@^3.24.1",
+    "postgres": "npm:postgres@^3.4.5"
+  }
+}
