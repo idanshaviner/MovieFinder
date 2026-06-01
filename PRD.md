@@ -248,9 +248,10 @@ These do not block the project but must shape expectations:
 - **Trust/accuracy.** Always show "why"; never recommend non-existent titles.
 
 ### Distribution & access (v1 beta)
-- **Closed beta — hard cap of 10 users**, enforced **server-side at sign-up** (an Edge Function
-  counts existing profiles; the 11th sign-up is refused with a friendly "beta is full" / waitlist
-  message; OTP verification + persistent session otherwise). ⚠️ An **unlisted** Chrome Web Store
+- **Closed beta — hard cap of 10 users**, enforced **server-side** by a race-free `auth.users`
+  trigger (counts within the sign-up transaction; the 11th confirmed sign-up is refused with a
+  friendly "beta is full" / waitlist message; OTP verification + persistent session otherwise).
+  ⚠️ An **unlisted** Chrome Web Store
   listing only hides the item from search — *anyone with the share link can still install it* — so
   the cap **must** live in the backend, never in the store.
 - **Owner notified of every new user** — on first profile creation, a transactional email/alert is

@@ -126,8 +126,8 @@ cross-user data leak (review m5):
 ## 13. Cost & budget guard {#13-cost--budget-guard}
 v1 is a **closed beta capped at 10 users** (enforced server-side at sign-up); spend is still
 defended in depth so a single user can't drain the budget:
-- **User cap:** sign-up Edge Function refuses the 11th profile (`BETA_FULL`) — the first line of
-  spend defense.
+- **User cap:** a race-free `auth.users` trigger refuses the 11th confirmed sign-up (`BETA_FULL`,
+  migration 0006) — the first line of spend defense.
 - **Per-user caps make the budget self-enforcing.** Two windows on the `rate_limits` table,
   both incremented **atomically** in Postgres (`increment_rate_limit`, migration 0005 — a
   read-then-write in JS would let a parallel burst bypass the cap):

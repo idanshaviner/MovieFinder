@@ -27,7 +27,7 @@
 | `INVALID_INPUT`    | 400  | false       | Body failed schema validation            |
 | `RATE_LIMITED`     | 429  | true        | Per-user budget exceeded                 |
 | `AT_CAPACITY`      | 429  | true        | Global monthly budget reached → degrade gracefully ([`09 §13`](09-conventions.md#13-cost--budget-guard)) |
-| `BETA_FULL`        | 403  | false       | Closed beta is at its 10-user cap → sign-up refused ([`08 E0-13`](08-work-breakdown.md#epic-e0--foundations--scaffolding-prd-phase-0)) |
+| `BETA_FULL`        | —    | false       | Closed beta at its 10-user cap → sign-up refused. ⚠️ Raised by the **`auth.users` trigger** (migration 0006), so it surfaces as a **GoTrue auth error** (not this Edge-Function envelope); the SW `auth.ts` matches it and shows friendly "beta is full" copy ([`08 E0-13`](08-work-breakdown.md#epic-e0--foundations--scaffolding-prd-phase-0)) |
 | `UPSTREAM_TIMEOUT` | 504  | true        | Anthropic/OpenAI/TMDB timed out          |
 | `UPSTREAM_ERROR`   | 502  | true        | Upstream returned an error               |
 | `NOT_FOUND`        | 404  | false       | e.g. resolve found nothing               |

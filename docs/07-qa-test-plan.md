@@ -49,6 +49,10 @@ and manual eval run on release candidates.
   `playDeepLink` is ever set by the server** (review B1).
 - **/catalog/resolve**: exact match high confidence; ambiguous → lower; miss → 404; lazy
   insert path adds a row + embedding.
+- **Beta user cap (E0-13, migration 0006)**: seed `BETA_MAX_USERS` confirmed users → the next
+  `verifyOtp` raises `BETA_FULL`; a 10th user's re-sign-in still succeeds; an **unconfirmed** OTP
+  send does **not** consume a slot (gate is the confirmed transition); two concurrent 11th
+  confirmations can't both pass (race-free trigger).
 - **DELETE /account/data**: removes rows from all six user tables; idempotent when empty.
 - **Rate limit (atomic, budget-bounding)**: the N+1th call in a window → 429 retryable; the
   **monthly** cap (100) trips independently of the **daily** cap (15); a **parallel burst** of
