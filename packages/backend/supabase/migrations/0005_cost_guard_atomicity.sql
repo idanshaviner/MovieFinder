@@ -49,4 +49,12 @@ as $$
         updated_at = now();
 $$;
 
-revoke all on function accrue_cost(date, numeric, numeric) from public, anon, authenticated;
+-- Lock down: only the service role may accrue cost. Revoke from PUBLIC always; revoke from the
+-- Supabase client roles only if they exist (they don't in the bare-postgres CI image).
+revoke all on function accrue_cost(date, numeric, numeric) from public;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    execute 'revoke all on function accrue_cost(date, numeric, numeric) from anon, authenticated';
+  end if;
+end $$;

@@ -38,7 +38,8 @@ begin
 end;
 $$;
 
-revoke all on function public.enforce_beta_user_cap() from public, anon, authenticated;
+-- (No REVOKE needed: a trigger function can't be invoked directly — Postgres rejects a direct
+-- call — so EXECUTE privilege on it is moot. It only ever runs from the trigger below.)
 
 drop trigger if exists trg_enforce_beta_user_cap on auth.users;
 create trigger trg_enforce_beta_user_cap
