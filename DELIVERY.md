@@ -11,9 +11,10 @@
 ✅ done & verified · 🟢 in progress · 🟡 partial / stubbed · ⛔ blocked · ⬜ not started
 
 ### Snapshot (where we are right now)
-- **The entire testable core is built & verified — 40 tests green** (16 Vitest + 24 Deno):
-  extension shell, backend harness, migrations (run on real PG+pgvector), E1 (TMDB/OpenAI/ingest/
-  resolution), and the E4 recommender brain (grounding gate, ranking, providers, prompt, Claude client).
+- **The entire testable core is built & verified — 52 tests green** (28 Vitest + 24 Deno):
+  extension shell + **Netflix capture adapter/scrobbler**, backend harness, migrations (run on real
+  PG+pgvector), E1 (TMDB/OpenAI/ingest/resolution), and the E4 recommender brain (grounding gate,
+  ranking, providers, prompt, Claude client).
 - **Only two recommender pieces remain — retrieval SQL (E4-2) + the `/recommend` handler (E4-4) —
   and both REQUIRE the live DB + LLM.** We are now genuinely at the keys boundary.
 - **Hard blocker = E0-12 (yours):** provision Supabase + TMDB/OpenAI/Anthropic keys → I run the
@@ -93,7 +94,7 @@ A milestone is **Done** only when every box is checked. These are the acceptance
 | ---- | --------- | ------ | ----- |
 | E0 Foundations | M0 | ✅ 95% | code complete + verified; E0-12 (accounts) + E0-11 (Sentry) outstanding |
 | E1 Catalog ingest | M1 | 🟡 | TMDB + OpenAI clients, ingest job, **title resolution (E1-6, 9 deno tests pass)** built & verified; `watchId` (E1-0) ✅; nightly (E1-5) pending; **run** blocked on keys |
-| E2 Netflix capture | M2 | ⬜ | adapter contract + scrobbler + session read + fixtures |
+| E2 Netflix capture | M2 | 🟡 | **adapter contract + scrobbler state machine + title parsing built & tested (12 vitest)**; SW capture wiring (E2-6, needs resolve endpoint) + session read (E2-10) pending |
 | E3 Store/profile/sync | M2/M3 | 🟡 | IndexedDB + watchRepo ✅ (E0-5); auth/sync/profile pending |
 | E4 Chat + /recommend | M3 | 🟡 | dock UI shell ✅; **grounding gate, availability ranking, providers, prompt builder, Anthropic + OpenAI + TMDB clients all built & tested**; only **retrieval SQL (E4-2) + /recommend handler (E4-4)** remain — both need the live DB/LLM (keys) |
 | E5 Settings/onboarding/privacy | M4 | ⬜ | — |
